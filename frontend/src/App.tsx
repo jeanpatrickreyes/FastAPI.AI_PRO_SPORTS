@@ -6,6 +6,7 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { useAuthStore, useSettingsStore } from './store';
+import { api } from './api/client';
 import Layout from './components/Layout/Layout';
 import Dashboard from './components/Dashboard/Dashboard';
 import Predictions from './pages/Predictions/Predictions';
@@ -27,7 +28,62 @@ const queryClient = new QueryClient({
 });
 
 const ProtectedRoute: React.FC = () => {
-  const { isAuthenticated } = useAuthStore();
+  const { token, user } = useAuthStore();
+  const [isHydrated, setIsHydrated] = React.useState(false);
+  
+  // Wait for Zustand persist to hydrate
+  React.useEffect(() => {
+    // Check if persist has hydrated by checking localStorage
+    const checkHydration = () => {
+      const stored = localStorage.getItem('auth-storage');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setIsHydrated(!!parsed.state);
+        } catch {
+          setIsHydrated(true);
+        }
+      } else {
+        setIsHydrated(true);
+      }
+    };
+    
+    // Check immediately
+    checkHydration();
+    
+    // Also check after a short delay to ensure hydration is complete
+    const timer = setTimeout(checkHydration, 100);
+    return () => clearTimeout(timer);
+  }, []);
+  
+  // Compute authentication status from token and user
+  const isAuthenticated = !!(token && user);
+  
+  // Sync token to API client when it changes
+  React.useEffect(() => {
+    if (token) {
+      api.setToken(token);
+    } else {
+      api.clearToken();
+    }
+  }, [token]);
+  
+  // Debug logging
+  React.useEffect(() => {
+    if (isHydrated) {
+      console.log('ProtectedRoute - Auth check:', {
+        hasToken: !!token,
+        hasUser: !!user,
+        isAuthenticated,
+        isHydrated
+      });
+    }
+  }, [token, user, isAuthenticated, isHydrated]);
+  
+  // Show nothing while hydrating
+  if (!isHydrated) {
+    return null;
+  }
   
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;

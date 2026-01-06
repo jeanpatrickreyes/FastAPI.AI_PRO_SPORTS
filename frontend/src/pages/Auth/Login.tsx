@@ -37,11 +37,20 @@ const Login: React.FC = () => {
 
   // Demo login for development
   const handleDemoLogin = () => {
-    login(
-      { id: 'demo', email: 'demo@aiprosports.com', role: 'admin' },
-      'demo-token'
-    );
-    navigate('/');
+    const demoToken = 'demo-token';
+    const demoUser = { id: 'demo', email: 'demo@aiprosports.com', role: 'admin' };
+    
+    // Set token in API client first
+    api.setToken(demoToken);
+    
+    // Set user and token in store
+    login(demoUser, demoToken);
+    
+    // Force a page reload to ensure state is persisted and loaded
+    // This ensures Zustand persist middleware has time to save to localStorage
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 100);
   };
 
   return (

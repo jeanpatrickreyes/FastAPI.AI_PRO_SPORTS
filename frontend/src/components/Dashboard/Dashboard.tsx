@@ -146,7 +146,27 @@ const Dashboard: React.FC = () => {
 
       setError(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard data');
+      // Handle errors gracefully - don't show error for demo mode
+      const isDemoMode = localStorage.getItem('token') === 'demo-token';
+      
+      if (isDemoMode) {
+        // In demo mode, show empty state with mock data
+        setStats({
+          todayPredictions: 0,
+          tierACount: 0,
+          winRate: 0,
+          dailyPL: 0,
+          weeklyROI: 0,
+          currentBankroll: 10000,
+          pendingBets: 0,
+          activeSports: [],
+        });
+        setPredictions([]);
+        setBankroll({ current: 10000, initial: 10000, peak: 10000, low: 10000, total_wagered: 0, total_won: 0, total_lost: 0, roi: 0, win_rate: 0 });
+        setError(null);
+      } else {
+        setError(err.message || 'Failed to load dashboard data');
+      }
     } finally {
       setLoading(false);
     }

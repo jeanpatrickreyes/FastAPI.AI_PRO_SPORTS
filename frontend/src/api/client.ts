@@ -1,7 +1,15 @@
 // src/api/client.ts
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+// Ensure we always use /api/v1 prefix
+const envUrl = import.meta.env.VITE_API_URL;
+const API_BASE_URL = envUrl 
+  ? (envUrl.endsWith('/api/v1') ? envUrl : `${envUrl}/api/v1`)
+  : 'http://localhost:8000/api/v1';
+
+// Debug: Log the API base URL
+console.log('API Base URL:', API_BASE_URL);
+console.log('VITE_API_URL env:', import.meta.env.VITE_API_URL);
 
 class APIClient {
   private client: AxiosInstance;
@@ -12,6 +20,12 @@ class APIClient {
       baseURL: API_BASE_URL,
       headers: { 'Content-Type': 'application/json' },
     });
+
+    // Initialize token from localStorage if available
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) {
+      this.token = storedToken;
+    }
 
     this.client.interceptors.request.use((config) => {
       if (this.token) {
@@ -24,9 +38,15 @@ class APIClient {
       (response) => response,
       async (error) => {
         if (error.response?.status === 401) {
-          this.token = null;
-          localStorage.removeItem('token');
-          window.location.href = '/login';
+          // Don't redirect if it's a demo token - allow demo mode to work
+          const isDemoToken = this.token === 'demo-token';
+          
+          if (!isDemoToken) {
+            this.token = null;
+            localStorage.removeItem('token');
+            window.location.href = '/login';
+          }
+          // For demo token, just reject the error without redirecting
         }
         return Promise.reject(error);
       }
