@@ -1,0 +1,289 @@
+# AI PRO SPORTS - Git Ignore File
+# Enterprise-Grade Sports Prediction Platform
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# =============================================================================
+# Node.js / Frontend
+# =============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Build outputs
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/.next/
+frontend/out/
+
+# TypeScript
+*.tsbuildinfo
+.tsbuildinfo
+
+# Package manager locks (optional - uncomment if you want to ignore)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# =============================================================================
+# Environment Variables & Secrets
+# =============================================================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+*.env
+!.env.example
+!.env.template
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# =============================================================================
+# Docker
+# =============================================================================
+.dockerignore
+docker-compose.override.yml
+
+# =============================================================================
+# Database
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+postgres_data/
+*.dump
+*.sql.backup
+
+# =============================================================================
+# Logs
+# =============================================================================
+logs/
+*.log
+*.log.*
+log/
+*.log.gz
+*.log.1
+*.log.2
+
+# Application logs
+app/logs/
+logs/nginx/
+*.log
+
+# =============================================================================
+# Data & Models
+# =============================================================================
+data/
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.onnx
+models/*.pb
+models/*.pt
+models/*.pth
+models/checkpoints/
+models/trained/
+!models/.gitkeep
+
+# Data files
+*.csv
+*.parquet
+*.feather
+*.hdf5
+*.h5
+data/raw/
+data/processed/
+data/external/
+data/interim/
+
+# =============================================================================
+# ML/AI Specific
+# =============================================================================
+.wandb/
+mlruns/
+.mlflow/
+tensorboard_logs/
+checkpoints/
+runs/
+experiments/
+
+# =============================================================================
+# OS Files
+# =============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# IDE & Editor
+# =============================================================================
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# Temporary Files
+# =============================================================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
+.cache/
+tmp/
+temp/
+
+# =============================================================================
+# SSL Certificates (Development)
+# =============================================================================
+docker/ssl/*.pem
+docker/ssl/*.key
+docker/ssl/*.crt
+!docker/ssl/.gitkeep
+
+# =============================================================================
+# Monitoring & Metrics
+# =============================================================================
+prometheus_data/
+grafana_data/
+*.prom
+
+# =============================================================================
+# Backups
+# =============================================================================
+backups/
+*.backup
+*.bak
+*.old
+
+# =============================================================================
+# Documentation Build
+# =============================================================================
+docs/_build/
+docs/.doctrees/
+site/
+
+# =============================================================================
+# Project Specific
+# =============================================================================
+# Keep these directories but ignore contents
+!models/.gitkeep
+!data/.gitkeep
+!logs/.gitkeep
+!docker/ssl/.gitkeep
+
