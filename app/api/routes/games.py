@@ -14,7 +14,7 @@ from app.api.dependencies import get_current_user
 from app.core.cache import cache_manager
 
 
-router = APIRouter(prefix="/games", tags=["games"])
+router = APIRouter(tags=["games"])
 
 
 # ============================================================================

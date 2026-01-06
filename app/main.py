@@ -49,6 +49,7 @@ from app.api.routes import (
     backtest_router,
     player_props_router,
 )
+from app.api.routes.reports import router as reports_router
 
 # Configure logging
 logging.basicConfig(
@@ -379,9 +380,36 @@ async def general_exception_handler(request: Request, exc: Exception):
 # API v1 routes
 API_V1_PREFIX = "/api/v1"
 
+# Root API v1 endpoint
+@app.get(API_V1_PREFIX)
+async def api_v1_root():
+    """API v1 root endpoint with available routes."""
+    from app.core.config import settings
+    return {
+        "version": "v1",
+        "name": settings.app_name,
+        "status": "operational",
+        "endpoints": {
+            "health": f"{API_V1_PREFIX}/health",
+            "auth": f"{API_V1_PREFIX}/auth",
+            "predictions": f"{API_V1_PREFIX}/predictions",
+            "games": f"{API_V1_PREFIX}/games",
+            "odds": f"{API_V1_PREFIX}/odds",
+            "betting": f"{API_V1_PREFIX}/betting",
+            "analytics": f"{API_V1_PREFIX}/analytics",
+            "reports": f"{API_V1_PREFIX}/reports",
+            "models": f"{API_V1_PREFIX}/models",
+            "player-props": f"{API_V1_PREFIX}/player-props",
+            "backtest": f"{API_V1_PREFIX}/backtest",
+            "monitoring": f"{API_V1_PREFIX}/monitoring",
+            "admin": f"{API_V1_PREFIX}/admin",
+        },
+        "docs": f"{API_V1_PREFIX}/docs" if settings.debug else None
+    }
+
 app.include_router(
     health_router,
-    prefix=API_V1_PREFIX,
+    prefix=f"{API_V1_PREFIX}/health",
     tags=["Health"]
 )
 
@@ -449,6 +477,12 @@ app.include_router(
     admin_router,
     prefix=f"{API_V1_PREFIX}/admin",
     tags=["Admin"]
+)
+
+app.include_router(
+    reports_router,
+    prefix=f"{API_V1_PREFIX}/reports",
+    tags=["Reports"]
 )
 
 

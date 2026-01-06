@@ -13,7 +13,7 @@ from app.core.cache import cache_manager, get_cache_manager
 from app.api.dependencies import get_current_user
 
 
-router = APIRouter(prefix="/health", tags=["health"])
+router = APIRouter(tags=["health"])
 
 
 # ============================================================================
@@ -79,8 +79,10 @@ async def basic_health_check():
     
     # Check database
     try:
-        db_healthy = await db_manager.health_check()
-        latency = await db_manager.get_stats().get("response_time_ms", 0)
+        db_health_result = await db_manager.health_check()
+        db_healthy = db_health_result.get("status") == "healthy" if isinstance(db_health_result, dict) else False
+        db_stats = db_manager.get_stats()
+        latency = db_health_result.get("latency_ms", 0) if isinstance(db_health_result, dict) else 0
         components["database"] = ComponentHealth(
             name="PostgreSQL",
             status="healthy" if db_healthy else "unhealthy",
@@ -154,19 +156,20 @@ async def detailed_health_check(
     
     # Database detailed check
     try:
-        db_health = await db_manager.health_check()
-        db_stats = await db_manager.get_stats()
-        db_latency = await db_manager.get_stats().get("response_time_ms", 0)
+        db_health_result = await db_manager.health_check()
+        db_healthy = db_health_result.get("status") == "healthy" if isinstance(db_health_result, dict) else False
+        db_stats = db_manager.get_stats()
+        db_latency = db_health_result.get("latency_ms", 0) if isinstance(db_health_result, dict) else 0
         
         components["database"] = ComponentHealth(
             name="PostgreSQL",
-            status="healthy" if db_health else "unhealthy",
+            status="healthy" if db_healthy else "unhealthy",
             latency_ms=db_latency,
             last_check=now
         )
         
         database_info = {
-            "status": "healthy" if db_health else "unhealthy",
+            "status": "healthy" if db_healthy else "unhealthy",
             "latency_ms": db_latency,
             "pool_size": db_stats.get("pool_size", 0),
             "active_connections": db_stats.get("active", 0),
@@ -174,7 +177,7 @@ async def detailed_health_check(
             "overflow": db_stats.get("overflow", 0)
         }
         
-        if not db_health:
+        if not db_healthy:
             overall_status = "unhealthy"
     except Exception as e:
         components["database"] = ComponentHealth(
