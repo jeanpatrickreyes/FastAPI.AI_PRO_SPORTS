@@ -18,8 +18,8 @@ services:
       - ENVIRONMENT=production
       - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/ai_pro_sports
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production}
+      - SECRET_KEY=${SECRET_KEY:-ai-pro-sports-secret-key-change-me-in-production-32chars}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-ai-pro-sports-jwt-secret-key-change-me-in-production-32chars}
       - ODDS_API_KEY=${ODDS_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
@@ -64,7 +64,7 @@ services:
       - ENVIRONMENT=production
       - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/ai_pro_sports
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - SECRET_KEY=${SECRET_KEY:-ai-pro-sports-secret-key-change-me-in-production-32chars}
       - ODDS_API_KEY=${ODDS_API_KEY}
     volumes:
       - ./models:/app/models
