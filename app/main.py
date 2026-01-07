@@ -28,7 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from app.core.config import get_settings
-from app.core.database import get_database_manager
+from app.core.database import get_database_manager, init_db
 from app.core.cache import get_cache_manager
 from app.services.monitoring import get_monitoring_service
 from app.services.alerting import get_alerting_service, AlertSeverity
@@ -84,6 +84,9 @@ async def lifespan(app: FastAPI):
         db_manager = get_database_manager()
         await db_manager.initialize()
         logger.info("✓ Database initialized")
+        # Ensure tables exist
+        await init_db()
+        logger.info("✓ Database tables ensured")
         
         # Cache
         cache_manager = get_cache_manager()

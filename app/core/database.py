@@ -266,11 +266,15 @@ async def init_db() -> None:
     """Initialize database and create tables"""
     await db_manager.initialize()
     
-    if settings.ENVIRONMENT == "development":
-        # In development, create tables if they don't exist
+    # Create minimal required tables for auth if they don't exist
+    try:
         async with db_manager._engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables created (development mode)")
+            # Import only what we need to avoid FK mismatches across entire schema
+            from app.models.models import User  # type: ignore
+            await conn.run_sync(User.__table__.create, checkfirst=True)
+        logger.info("Minimal auth tables ensured/created")
+    except Exception as e:
+        logger.error(f"Error creating minimal tables: {e}")
 
 
 async def close_db() -> None:

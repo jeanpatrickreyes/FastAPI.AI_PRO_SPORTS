@@ -17,12 +17,12 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.core.database import Base
 
 
-class Base(DeclarativeBase):
-    """Base class for all models."""
-    pass
+#
+# Base class imported from app.core.database
 
 
 # =============================================================================

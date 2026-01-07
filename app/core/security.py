@@ -99,7 +99,7 @@ class SecurityManager:
     
     def create_access_token(
         self,
-        user_id: int,
+        user_id: str,
         username: str,
         email: str,
         role: str = "user"
@@ -109,6 +109,7 @@ class SecurityManager:
         expire = now + timedelta(minutes=self.access_token_expire)
         
         payload = {
+            "sub": user_id,  # subject for compatibility with dependencies
             "user_id": user_id,
             "username": username,
             "email": email,
@@ -123,7 +124,7 @@ class SecurityManager:
     
     def create_refresh_token(
         self,
-        user_id: int,
+        user_id: str,
         username: str,
         email: str,
         role: str = "user"
@@ -133,6 +134,7 @@ class SecurityManager:
         expire = now + timedelta(days=self.refresh_token_expire)
         
         payload = {
+            "sub": user_id,  # subject for compatibility with dependencies
             "user_id": user_id,
             "username": username,
             "email": email,

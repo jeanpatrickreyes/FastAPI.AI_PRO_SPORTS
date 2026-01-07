@@ -168,43 +168,94 @@ class Transaction(BaseModel):
 
 @router.get("/bankroll", response_model=List[BankrollInfo])
 async def get_bankrolls(
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Optional[AsyncSession] = Depends(get_db)
 ):
     """
     Get all bankrolls for the current user.
     """
-    query = """
-        SELECT * FROM bankrolls
-        WHERE user_id = :user_id
-        ORDER BY created_at DESC
-    """
-    
-    result = await db.execute(query, {"user_id": current_user["id"]})
-    rows = result.fetchall()
-    
-    return [
-        BankrollInfo(
-            id=row.id,
-            user_id=row.user_id,
-            name=row.name,
-            initial_amount=row.initial_amount,
-            current_amount=row.current_amount,
-            peak_amount=row.peak_amount,
-            low_amount=row.low_amount,
-            total_wagered=row.total_wagered or 0,
-            total_won=row.total_won or 0,
-            total_lost=row.total_lost or 0,
-            roi=row.roi or 0,
-            win_rate=row.win_rate or 0,
-            max_drawdown=row.max_drawdown or 0,
-            kelly_fraction=row.kelly_fraction,
-            max_bet_percent=row.max_bet_percent,
-            created_at=row.created_at,
-            updated_at=row.updated_at
+    # Check if demo user - return mock bankroll for demo mode (before DB access)
+    if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+        from datetime import datetime
+        demo_bankroll = BankrollInfo(
+            id=1,
+            user_id=1,  # Use int for demo user
+            name="Demo Bankroll",
+            initial_amount=10000.0,
+            current_amount=10000.0,
+            peak_amount=10000.0,
+            low_amount=10000.0,
+            total_wagered=0.0,
+            total_won=0.0,
+            total_lost=0.0,
+            roi=0.0,
+            win_rate=0.0,
+            max_drawdown=0.0,
+            kelly_fraction=0.25,
+            max_bet_percent=0.02,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
         )
-        for row in rows
-    ]
+        return [demo_bankroll]
+    
+    try:
+        user_id = current_user.id if hasattr(current_user, 'id') else current_user["id"]
+        query = """
+            SELECT * FROM bankrolls
+            WHERE user_id = :user_id
+            ORDER BY created_at DESC
+        """
+        
+        result = await db.execute(query, {"user_id": user_id})
+        rows = result.fetchall()
+        
+        return [
+            BankrollInfo(
+                id=row.id,
+                user_id=row.user_id,
+                name=row.name,
+                initial_amount=row.initial_amount,
+                current_amount=row.current_amount,
+                peak_amount=row.peak_amount,
+                low_amount=row.low_amount,
+                total_wagered=row.total_wagered or 0,
+                total_won=row.total_won or 0,
+                total_lost=row.total_lost or 0,
+                roi=row.roi or 0,
+                win_rate=row.win_rate or 0,
+                max_drawdown=row.max_drawdown or 0,
+                kelly_fraction=row.kelly_fraction,
+                max_bet_percent=row.max_bet_percent,
+                created_at=row.created_at,
+                updated_at=row.updated_at
+            )
+            for row in rows
+        ]
+    except Exception:
+        # If database error, return mock bankroll for demo mode
+        if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+            from datetime import datetime
+            demo_bankroll = BankrollInfo(
+                id=1,
+                user_id=1,  # Use int for demo user
+                name="Demo Bankroll",
+                initial_amount=10000.0,
+                current_amount=10000.0,
+                peak_amount=10000.0,
+                low_amount=10000.0,
+                total_wagered=0.0,
+                total_won=0.0,
+                total_lost=0.0,
+                roi=0.0,
+                win_rate=0.0,
+                max_drawdown=0.0,
+                kelly_fraction=0.25,
+                max_bet_percent=0.02,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            return [demo_bankroll]
+        raise
 
 
 @router.post("/bankroll", response_model=BankrollInfo, status_code=status.HTTP_201_CREATED)

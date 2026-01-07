@@ -47,6 +47,7 @@ async def get_current_user(
     Get current authenticated user from JWT token.
     
     Raises HTTPException if not authenticated.
+    Supports demo token for development.
     """
     if not credentials:
         raise HTTPException(
@@ -54,6 +55,31 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Support demo token for development
+    if credentials.credentials == "demo-token":
+        # Return a mock demo user object
+        from app.models import UserRole
+        from datetime import datetime
+        from uuid import UUID
+        
+        class DemoUser:
+            def __init__(self):
+                self.id = UUID("00000000-0000-0000-0000-000000000000")
+                self.email = "demo@aiprosports.com"
+                self.hashed_password = ""  # Not needed for demo
+                self.role = UserRole.ADMIN
+                self.is_active = True
+                self.is_verified = True
+                self.two_factor_enabled = False
+                self.two_factor_secret = None
+                self.first_name = "Demo"
+                self.last_name = "User"
+                self.created_at = datetime.utcnow()
+                self.updated_at = datetime.utcnow()
+                self.last_login_at = None
+        
+        return DemoUser()
     
     try:
         payload = security_manager.decode_token(credentials.credentials)

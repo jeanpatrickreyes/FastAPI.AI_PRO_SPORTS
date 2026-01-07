@@ -15,19 +15,20 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.security import (
-    TOTPManager,
-    get_security_manager,
-)
+from app.core.security import SecurityManager, TOTPManager
 from app.services.alerting import get_alerting_service
+from app.api.dependencies import get_db
+from app.models.models import User, UserRole
+from uuid import UUID
 
 router = APIRouter()
 settings = get_settings()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+security = SecurityManager()
 
 
 # ============================================================================
@@ -51,7 +52,7 @@ class UserRegisterRequest(BaseModel):
 
 class UserLoginRequest(BaseModel):
     """User login request."""
-    username: str
+    email: EmailStr
     password: str
     totp_code: Optional[str] = None
 
@@ -138,36 +139,9 @@ class UserResponse(BaseModel):
 # Dependencies
 # ============================================================================
 
-async def get_current_user(
-    request: Request,
-    token: str = Depends(oauth2_scheme)
-) -> dict:
-    """Get current authenticated user from token."""
-    security = get_security_manager()
-    
-    try:
-        payload = security.jwt.verify_access_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # In a real implementation, fetch user from database
-        # For now, return payload as user dict
-        return {
-            "user_id": payload.get("sub"),
-            "email": payload.get("email"),
-            "role": payload.get("role", "user"),
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+async def get_current_user(request: Request) -> dict:
+    """Use global dependency in app.api.dependencies instead."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Use global dependencies.get_current_user")
 
 
 async def get_current_admin(
@@ -187,7 +161,7 @@ async def get_current_admin(
 # ============================================================================
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: UserRegisterRequest):
+async def register(request: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
     """
     Register a new user account.
     
@@ -196,45 +170,63 @@ async def register(request: UserRegisterRequest):
     - Creates user with pending status
     - Sends verification email
     """
-    security = get_security_manager()
-    
     # Validate password strength
-    is_strong, message = security.validate_password_strength(request.password)
+    is_strong, issues = SecurityManager().check_password_strength(request.password)
     if not is_strong:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password too weak: {message}"
+            detail=f"Password too weak: {', '.join(issues)}"
         )
     
-    # Hash password
-    password_hash = security.hash_password(request.password)
+    # Check if email already exists (raw SQL to avoid enum/type mismatches)
+    from sqlalchemy import text
+    check_res = await db.execute(text("SELECT 1 FROM users WHERE email = :email LIMIT 1"), {"email": request.email})
+    if check_res.first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     
-    # In a real implementation:
-    # 1. Check if email/username already exists
-    # 2. Create user in database
-    # 3. Send verification email
+    # Create user (raw SQL)
+    params = {
+        "email": request.email,
+        "hashed_password": SecurityManager().hash_password(request.password),
+        "role": "user",
+        "is_active": True,
+        "is_verified": False,
+        "two_factor_enabled": False,
+        "two_factor_secret": None,
+        "first_name": request.first_name,
+        "last_name": request.last_name,
+    }
+    insert_sql = text("""
+        INSERT INTO users (
+            email, hashed_password, role, is_active, is_verified,
+            two_factor_enabled, two_factor_secret, first_name, last_name, created_at, updated_at
+        ) VALUES (
+            :email, :hashed_password, :role, :is_active, :is_verified,
+            :two_factor_enabled, :two_factor_secret, :first_name, :last_name, now(), now()
+        )
+        RETURNING id, email, role, is_active, is_verified, two_factor_enabled, first_name, last_name, created_at, last_login_at
+    """)
+    result = await db.execute(insert_sql, params)
+    row = result.fetchone()
+    await db.commit()
     
-    # Return mock user response
     return UserResponse(
-        id=1,
-        email=request.email,
+        id=0,
+        email=row.email,
         username=request.username,
-        first_name=request.first_name,
-        last_name=request.last_name,
-        role="user",
-        status="pending",
-        two_factor_enabled=False,
-        email_verified=False,
-        created_at=datetime.utcnow(),
-        last_login_at=None
+        first_name=row.first_name,
+        last_name=row.last_name,
+        role=row.role if isinstance(row.role, str) else "user",
+        status="active" if row.is_active else "inactive",
+        two_factor_enabled=row.two_factor_enabled,
+        email_verified=row.is_verified,
+        created_at=row.created_at,
+        last_login_at=row.last_login_at
     )
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends()
-):
+async def login(request: Request, body: UserLoginRequest, db: AsyncSession = Depends(get_db)):
     """
     Authenticate user and return tokens.
     
@@ -242,53 +234,42 @@ async def login(
     - Checks 2FA if enabled
     - Returns access and refresh tokens
     """
-    security = get_security_manager()
+    # Fetch user by email (raw SQL)
+    from sqlalchemy import text
+    res = await db.execute(text("SELECT id, email, hashed_password, role, is_active, first_name, last_name FROM users WHERE email = :email LIMIT 1"), {"email": body.email})
+    row = res.fetchone()
+    if not row or not SecurityManager().verify_password(body.password, row.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    if not row.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is disabled")
     
-    # In a real implementation:
-    # 1. Fetch user from database by username
-    # 2. Verify password hash
-    # 3. Check if 2FA required
-    # 4. Verify TOTP if 2FA enabled
-    
-    # Mock user data
-    user_data = {
-        "user_id": 1,
-        "email": f"{form_data.username}@example.com",
-        "role": "user",
-        "two_factor_enabled": False
-    }
-    
-    # Generate tokens
-    access_token = security.jwt.create_access_token(
-        user_id=str(user_data["user_id"]),
-        email=user_data["email"],
-        role=user_data["role"]
+    # TODO: handle 2FA here if enabled
+    user_id_str = str(row.id)
+    access_token = SecurityManager().create_access_token(
+        user_id=user_id_str,
+        username=((row.first_name or "") + (row.last_name or "")),
+        email=row.email,
+        role=row.role if isinstance(row.role, str) else "user"
+    )
+    refresh_token = SecurityManager().create_refresh_token(
+        user_id=user_id_str,
+        username=((row.first_name or "") + (row.last_name or "")),
+        email=row.email,
+        role=row.role if isinstance(row.role, str) else "user"
     )
     
-    refresh_token = security.jwt.create_refresh_token(
-        user_id=str(user_data["user_id"])
-    )
-    
-    # Get client info for session
-    client_ip = request.client.host if request.client else "unknown"
-    user_agent = request.headers.get("user-agent", "unknown")
-    
-    # Log login
-    alerting = get_alerting_service()
-    await alerting.info(
-        "User Login",
-        f"User {form_data.username} logged in from {client_ip}"
-    )
+    try:
+        alerting = get_alerting_service()
+        client_ip = request.client.host if request.client else "unknown"
+        await alerting.info("User Login", f"User {row.email} logged in from {client_ip}")
+    except Exception:
+        pass
     
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=settings.jwt_access_token_expire_minutes * 60,
-        user={
-            "id": user_data["user_id"],
-            "email": user_data["email"],
-            "role": user_data["role"]
-        }
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user={"id": user_id_str, "email": row.email, "role": row.role if isinstance(row.role, str) else "user"}
     )
 
 

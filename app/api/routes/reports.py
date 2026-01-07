@@ -13,6 +13,9 @@ from sqlalchemy import select, and_
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
 from app.models.models import Prediction, Bet, BetResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -42,6 +45,10 @@ async def get_daily_report(
     Get daily report for dashboard.
     Returns win_rate, daily_pl, and weekly_roi.
     """
+    # Check if demo user - return empty report for demo mode
+    if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+        return DailyReport(win_rate=0.0, daily_pl=0.0, weekly_roi=0.0)
+    
     try:
         # Calculate daily P/L from today's bets
         today = datetime.utcnow().date()
@@ -87,6 +94,10 @@ async def get_daily_report(
             weekly_roi=weekly_roi
         )
     except Exception as e:
-        # Return empty report on error
+        # Return empty report on error (or for demo mode)
+        if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+            return DailyReport(win_rate=0.0, daily_pl=0.0, weekly_roi=0.0)
+        # For real users with DB errors, still return empty but log the error
+        logger.error(f"Error getting daily report: {e}")
         return DailyReport(win_rate=0.0, daily_pl=0.0, weekly_roi=0.0)
 

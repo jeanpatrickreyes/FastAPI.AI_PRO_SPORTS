@@ -235,75 +235,85 @@ async def get_todays_predictions(
     sport: Optional[str] = Query(None, description="Filter by sport code"),
     signal_tier: Optional[str] = Query(None, description="Filter by signal tier"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Get today's predictions with optional sport and tier filtering.
     """
+    # Check if demo user - return empty list for demo mode
+    if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+        return []
+    
     cache_key = f"predictions:today:{sport}:{signal_tier}"
     
     cached = await cache_manager.get(cache_key)
     if cached:
         return cached
     
-    today = date.today()
-    
-    conditions = ["DATE(locked_at) = :today"]
-    params = {"today": today}
-    
-    if sport:
-        conditions.append("sport_code = :sport")
-        params["sport"] = sport
-    if signal_tier:
-        conditions.append("signal_tier = :signal_tier")
-        params["signal_tier"] = signal_tier
-    
-    where_clause = " AND ".join(conditions)
-    
-    query = f"""
-        SELECT 
-            p.*,
-            m.version as model_version
-        FROM predictions p
-        LEFT JOIN ml_models m ON p.model_id = m.id
-        WHERE {where_clause}
-        ORDER BY p.probability DESC
-    """
-    
-    result = await db.execute(query, params)
-    rows = result.fetchall()
-    
-    predictions = [
-        PredictionBase(
-            id=row.id,
-            game_id=row.game_id,
-            sport_code=row.sport_code,
-            bet_type=row.bet_type,
-            predicted_side=row.predicted_side,
-            probability=row.probability,
-            edge=row.edge,
-            signal_tier=row.signal_tier,
-            line_at_prediction=row.line_at_prediction,
-            odds_at_prediction=row.odds_at_prediction,
-            kelly_fraction=row.kelly_fraction,
-            recommended_bet=row.recommended_bet,
-            prediction_hash=row.prediction_hash,
-            locked_at=row.locked_at,
-            model_id=row.model_id,
-            model_version=row.model_version or "1.0.0",
-            is_graded=row.is_graded,
-            result=row.result,
-            actual_outcome=row.actual_outcome,
-            profit_loss=row.profit_loss,
-            clv=row.clv
-        )
-        for row in rows
-    ]
-    
-    # Cache for 5 minutes
-    await cache_manager.set(cache_key, [p.dict() for p in predictions], ttl=300)
-    
-    return predictions
+    try:
+        today = date.today()
+        
+        conditions = ["DATE(locked_at) = :today"]
+        params = {"today": today}
+        
+        if sport:
+            conditions.append("sport_code = :sport")
+            params["sport"] = sport
+        if signal_tier:
+            conditions.append("signal_tier = :signal_tier")
+            params["signal_tier"] = signal_tier
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+            SELECT 
+                p.*,
+                m.version as model_version
+            FROM predictions p
+            LEFT JOIN ml_models m ON p.model_id = m.id
+            WHERE {where_clause}
+            ORDER BY p.probability DESC
+        """
+        
+        result = await db.execute(query, params)
+        rows = result.fetchall()
+        
+        predictions = [
+            PredictionBase(
+                id=row.id,
+                game_id=row.game_id,
+                sport_code=row.sport_code,
+                bet_type=row.bet_type,
+                predicted_side=row.predicted_side,
+                probability=row.probability,
+                edge=row.edge,
+                signal_tier=row.signal_tier,
+                line_at_prediction=row.line_at_prediction,
+                odds_at_prediction=row.odds_at_prediction,
+                kelly_fraction=row.kelly_fraction,
+                recommended_bet=row.recommended_bet,
+                prediction_hash=row.prediction_hash,
+                locked_at=row.locked_at,
+                model_id=row.model_id,
+                model_version=row.model_version or "1.0.0",
+                is_graded=row.is_graded,
+                result=row.result,
+                actual_outcome=row.actual_outcome,
+                profit_loss=row.profit_loss,
+                clv=row.clv
+            )
+            for row in rows
+        ]
+        
+        # Cache for 5 minutes
+        await cache_manager.set(cache_key, [p.dict() for p in predictions], ttl=300)
+        
+        return predictions
+    except Exception:
+        # If database error, return empty list for demo mode
+        if hasattr(current_user, 'id') and str(current_user.id) == "00000000-0000-0000-0000-000000000000":
+            return []
+        raise
 
 
 @router.get("/sport/{sport_code}", response_model=List[PredictionBase])
