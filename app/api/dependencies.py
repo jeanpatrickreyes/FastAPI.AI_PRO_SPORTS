@@ -61,7 +61,6 @@ async def get_current_user(
         # Return a mock demo user object
         from app.models import UserRole
         from datetime import datetime
-        from uuid import UUID
         
         class DemoUser:
             def __init__(self):

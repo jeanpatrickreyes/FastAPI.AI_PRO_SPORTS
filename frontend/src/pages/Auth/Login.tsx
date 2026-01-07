@@ -26,11 +26,20 @@ const Login: React.FC = () => {
 
     try {
       const response = await api.login(email, password);
+      
+      // Store auth data in Zustand store (this will persist to localStorage)
       login(response.user, response.access_token);
-      navigate('/');
+      
+      // Ensure token is set in API client
+      api.setToken(response.access_token);
+      
+      // Small delay to ensure Zustand persist has saved to localStorage
+      // Then navigate to dashboard
+      setTimeout(() => {
+        navigate('/', { replace: true });
+      }, 50);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed. Please try again.');
-    } finally {
       setLoading(false);
     }
   };
@@ -43,14 +52,13 @@ const Login: React.FC = () => {
     // Set token in API client first
     api.setToken(demoToken);
     
-    // Set user and token in store
+    // Set user and token in store (this will persist to localStorage)
     login(demoUser, demoToken);
     
-    // Force a page reload to ensure state is persisted and loaded
-    // This ensures Zustand persist middleware has time to save to localStorage
+    // Small delay to ensure Zustand persist has saved to localStorage
     setTimeout(() => {
-      window.location.href = '/';
-    }, 100);
+      navigate('/', { replace: true });
+    }, 50);
   };
 
   return (

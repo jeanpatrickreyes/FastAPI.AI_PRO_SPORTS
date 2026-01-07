@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { useEffect } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
@@ -31,64 +31,96 @@ const ProtectedRoute: React.FC = () => {
   const { token, user } = useAuthStore();
   const [isHydrated, setIsHydrated] = React.useState(false);
   
-  // Wait for Zustand persist to hydrate
+  // Mark as hydrated after a brief moment to allow Zustand to hydrate
   React.useEffect(() => {
-    // Check if persist has hydrated by checking localStorage
-    const checkHydration = () => {
-      const stored = localStorage.getItem('auth-storage');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          setIsHydrated(!!parsed.state);
-        } catch {
-          setIsHydrated(true);
-        }
-      } else {
-        setIsHydrated(true);
-      }
-    };
-    
-    // Check immediately
-    checkHydration();
-    
-    // Also check after a short delay to ensure hydration is complete
-    const timer = setTimeout(checkHydration, 100);
+    const timer = setTimeout(() => {
+      setIsHydrated(true);
+    }, 0);
     return () => clearTimeout(timer);
   }, []);
   
-  // Compute authentication status from token and user
-  const isAuthenticated = !!(token && user);
+  // Check authentication - check localStorage directly since we know it has the data
+  // This is more reliable than waiting for Zustand to hydrate
+  const checkAuthentication = (): boolean => {
+    try {
+      const stored = localStorage.getItem('auth-storage');
+      if (!stored) {
+        return false;
+      }
+      
+      const parsed = JSON.parse(stored);
+      // Check if we have both token and user in the stored state
+      if (parsed.state?.token && parsed.state?.user) {
+        return true;
+      }
+    } catch (e) {
+      console.error('Error checking auth-storage:', e);
+    }
+    
+    return false;
+  };
   
-  // Sync token to API client when it changes
+  const isAuthenticated = checkAuthentication();
+  
+  // Get token from localStorage (source of truth)
+  const authToken = React.useMemo(() => {
+    try {
+      const stored = localStorage.getItem('auth-storage');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.state?.token || null;
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+    return null;
+  }, []);
+  
+  // Sync token to API client when authenticated
   React.useEffect(() => {
-    if (token) {
-      api.setToken(token);
+    if (isAuthenticated && authToken) {
+      api.setToken(authToken);
     } else {
       api.clearToken();
     }
-  }, [token]);
+  }, [isAuthenticated, authToken]);
   
   // Debug logging
   React.useEffect(() => {
     if (isHydrated) {
+      const stored = localStorage.getItem('auth-storage');
+      let parsedData = null;
+      try {
+        if (stored) {
+          parsedData = JSON.parse(stored);
+        }
+      } catch (e) {
+        // Ignore
+      }
+      
       console.log('ProtectedRoute - Auth check:', {
-        hasToken: !!token,
-        hasUser: !!user,
+        hasAuthStorage: !!stored,
         isAuthenticated,
-        isHydrated
+        isHydrated,
+        storeToken: !!token,
+        storeUser: !!user,
+        authToken: !!authToken,
+        localStorageState: parsedData?.state || null
       });
     }
-  }, [token, user, isAuthenticated, isHydrated]);
+  }, [isAuthenticated, isHydrated, token, user, authToken]);
   
-  // Show nothing while hydrating
+  // Show nothing while waiting for hydration check
   if (!isHydrated) {
     return null;
   }
   
+  // If not authenticated, redirect to login
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
   
+  // Authenticated - allow access
   return <Outlet />;
 };
 
