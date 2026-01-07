@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings, ODDS_API_SPORT_KEYS
-from app.models import Game, Odds, Sportsbook, OddsMovement
+from app.models import Game, Odds, Sportsbook, OddsMovement, Sport, Team, GameStatus
 from app.services.collectors.base_collector import (
     BaseCollector,
     CollectorResult,
@@ -253,8 +253,16 @@ class OddsCollector(BaseCollector):
                 )
                 game = game_result.scalar_one_or_none()
                 
+                # Create game if it doesn't exist
                 if not game:
-                    continue
+                    game = await self._create_game_from_odds_record(
+                        session,
+                        record,
+                        sport_code
+                    )
+                    if not game:
+                        logger.warning(f"Could not create game for {record.get('external_id')}")
+                        continue
                 
                 existing_odds = await session.execute(
                     select(Odds).where(
@@ -305,6 +313,128 @@ class OddsCollector(BaseCollector):
         
         await session.commit()
         return saved_count
+    
+    async def _create_game_from_odds_record(
+        self,
+        session: AsyncSession,
+        record: Dict[str, Any],
+        sport_code: str,
+    ) -> Optional[Game]:
+        """Create a game record from odds data if it doesn't exist."""
+        try:
+            # Get or create sport
+            sport = await self._get_or_create_sport(session, sport_code)
+            
+            if not sport:
+                logger.warning(f"Could not create sport {sport_code}")
+                return None
+            
+            # Get or create teams
+            home_team_name = record.get("home_team", "")
+            away_team_name = record.get("away_team", "")
+            
+            if not home_team_name or not away_team_name:
+                return None
+            
+            home_team = await self._get_or_create_team(session, sport.id, home_team_name)
+            away_team = await self._get_or_create_team(session, sport.id, away_team_name)
+            
+            # Parse game date
+            commence_time = record.get("commence_time")
+            if isinstance(commence_time, str):
+                from dateutil import parser
+                game_date = parser.parse(commence_time)
+            else:
+                game_date = datetime.utcnow()
+            
+            # Create game
+            game = Game(
+                sport_id=sport.id,
+                external_id=record["external_id"],
+                home_team_id=home_team.id,
+                away_team_id=away_team.id,
+                game_date=game_date,
+                status=GameStatus.SCHEDULED,
+            )
+            session.add(game)
+            await session.flush()  # Flush to get the ID
+            
+            logger.info(f"Created game {game.id} for {away_team_name} @ {home_team_name}")
+            return game
+            
+        except Exception as e:
+            logger.error(f"Error creating game from odds record: {e}")
+            return None
+    
+    async def _get_or_create_sport(
+        self,
+        session: AsyncSession,
+        sport_code: str,
+    ) -> Optional[Sport]:
+        """Get or create a sport record."""
+        result = await session.execute(
+            select(Sport).where(Sport.code == sport_code)
+        )
+        sport = result.scalar_one_or_none()
+        
+        if sport:
+            return sport
+        
+        # Create new sport
+        sport_names = {
+            "NBA": "National Basketball Association",
+            "NFL": "National Football League",
+            "NCAAF": "NCAA Football",
+            "NCAAB": "NCAA Basketball",
+            "NHL": "National Hockey League",
+            "MLB": "Major League Baseball",
+            "WNBA": "Women's National Basketball Association",
+            "CFL": "Canadian Football League",
+            "ATP": "ATP Tennis",
+            "WTA": "WTA Tennis",
+        }
+        
+        sport = Sport(
+            code=sport_code,
+            name=sport_names.get(sport_code, sport_code),
+            is_active=True,
+        )
+        session.add(sport)
+        await session.flush()
+        logger.info(f"Created sport {sport_code}")
+        return sport
+    
+    async def _get_or_create_team(
+        self,
+        session: AsyncSession,
+        sport_id: UUID,
+        team_name: str,
+    ) -> Team:
+        """Get or create a team record."""
+        # Try to find by name
+        result = await session.execute(
+            select(Team).where(
+                Team.sport_id == sport_id,
+                Team.name == team_name
+            )
+        )
+        team = result.scalar_one_or_none()
+        
+        if team:
+            return team
+        
+        # Create new team
+        abbreviation = team_name[:3].upper() if len(team_name) >= 3 else team_name.upper()
+        team = Team(
+            sport_id=sport_id,
+            external_id=f"{sport_id}_{team_name.lower().replace(' ', '_')}",
+            name=team_name,
+            abbreviation=abbreviation,
+            is_active=True,
+        )
+        session.add(team)
+        await session.flush()
+        return team
     
     async def _get_or_create_sportsbook(
         self,

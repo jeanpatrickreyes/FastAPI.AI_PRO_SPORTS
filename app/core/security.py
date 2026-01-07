@@ -161,9 +161,20 @@ class SecurityManager:
                 return None
             
             return payload
-        except jwt.ExpiredSignatureError:
+        except jwt.ExpiredSignatureError as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Token expired: {e}")
             return None
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Invalid token: {e}")
+            return None
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Token decode error: {e}")
             return None
     
     def revoke_token(self, token: str) -> bool:

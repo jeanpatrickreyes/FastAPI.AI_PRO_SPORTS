@@ -5,6 +5,7 @@ Enterprise-grade predictions endpoints with filtering, pagination, and SHAP expl
 
 from datetime import datetime, date, timedelta
 from typing import Optional, List
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, or_
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
 from app.core.cache import cache_manager
+from app.models import Prediction as DBPrediction, SignalTier, User, UserRole
 
 
 router = APIRouter(tags=["predictions"])
@@ -606,13 +608,15 @@ async def get_prediction_stats(
 async def generate_predictions(
     request: GeneratePredictionsRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Generate predictions for upcoming games.
+    Generate predictions for upcoming games and save them to the database.
     Requires admin role.
     """
-    if current_user.get("role") not in ["admin", "system"]:
+    # Check if user has admin or system role
+    user_role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+    if user_role not in ["admin", "super_admin", "system"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required to generate predictions"
@@ -627,12 +631,120 @@ async def generate_predictions(
             bet_types=request.bet_types
         )
         
+        # Convert and save predictions to database
+        saved_predictions = []
+        saved_count = 0
+        errors = result.get("errors", [])
+        
+        predictions_list = result.get("predictions", [])
+        
+        for pred_obj in predictions_list:
+            try:
+                # Handle both dataclass and dict objects
+                if hasattr(pred_obj, 'to_dict'):
+                    # It's a dataclass Prediction object
+                    pred_data = pred_obj.to_dict()
+                elif isinstance(pred_obj, dict):
+                    # It's already a dictionary
+                    pred_data = pred_obj
+                else:
+                    # Try to convert using dict() or get attributes
+                    pred_data = dict(pred_obj) if hasattr(pred_obj, '__dict__') else {}
+                
+                # Extract values with fallbacks
+                game_id_str = pred_data.get("game_id") or (getattr(pred_obj, 'game_id', None) if hasattr(pred_obj, 'game_id') else None)
+                if not game_id_str:
+                    errors.append(f"Missing game_id in prediction")
+                    continue
+                
+                # Convert game_id to UUID
+                try:
+                    game_id = game_id_str if isinstance(game_id_str, UUID) else UUID(str(game_id_str))
+                except (ValueError, AttributeError):
+                    errors.append(f"Invalid game_id format: {game_id_str}")
+                    continue
+                
+                # Get prediction hash
+                pred_hash = pred_data.get("prediction_hash") or (getattr(pred_obj, 'prediction_hash', None) if hasattr(pred_obj, 'prediction_hash') else None)
+                if not pred_hash:
+                    errors.append(f"Missing prediction_hash for game {game_id_str}")
+                    continue
+                
+                # Check if prediction already exists (by hash)
+                existing = await db.execute(
+                    select(DBPrediction).where(DBPrediction.prediction_hash == pred_hash)
+                )
+                if existing.scalar_one_or_none():
+                    continue  # Skip if already exists
+                
+                # Extract bet_type and predicted_side (handle both .value for enums and direct strings)
+                bet_type = pred_data.get("bet_type", "")
+                if hasattr(bet_type, 'value'):
+                    bet_type = bet_type.value
+                
+                predicted_side = pred_data.get("predicted_side", "")
+                if hasattr(predicted_side, 'value'):
+                    predicted_side = predicted_side.value
+                
+                # Get signal_tier
+                signal_tier_val = pred_data.get("signal_tier") or (getattr(pred_obj, 'signal_tier', None) if hasattr(pred_obj, 'signal_tier') else "D")
+                if hasattr(signal_tier_val, 'value'):
+                    signal_tier_val = signal_tier_val.value
+                signal_tier = SignalTier(signal_tier_val) if isinstance(signal_tier_val, str) else signal_tier_val
+                
+                # Get probability
+                probability = pred_data.get("probability") or (getattr(pred_obj, 'probability', 0.0) if hasattr(pred_obj, 'probability') else 0.0)
+                
+                # Get recommendation data (for kelly_fraction and recommended_bet_size)
+                recommendation = pred_data.get("recommendation", {})
+                if hasattr(pred_obj, 'recommendation'):
+                    rec_obj = pred_obj.recommendation
+                    if hasattr(rec_obj, 'kelly_fraction'):
+                        recommendation = {
+                            'kelly_fraction': rec_obj.kelly_fraction,
+                            'recommended_units': getattr(rec_obj, 'recommended_units', None)
+                        }
+                
+                # Create database prediction model
+                db_prediction = DBPrediction(
+                    game_id=game_id,
+                    bet_type=str(bet_type),
+                    predicted_side=str(predicted_side),
+                    probability=float(probability),
+                    calibrated_probability=pred_data.get("calibrated_probability"),
+                    line_at_prediction=pred_data.get("line_at_prediction") or pred_data.get("line") or (getattr(pred_obj, 'line', None) if hasattr(pred_obj, 'line') else None),
+                    odds_at_prediction=pred_data.get("odds_at_prediction") or pred_data.get("odds") or (getattr(pred_obj, 'odds', None) if hasattr(pred_obj, 'odds') else None),
+                    edge=pred_data.get("edge") or (getattr(pred_obj, 'edge', None) if hasattr(pred_obj, 'edge') else None),
+                    signal_tier=signal_tier,
+                    kelly_fraction=pred_data.get("kelly_fraction") or recommendation.get("kelly_fraction") if isinstance(recommendation, dict) else None,
+                    recommended_bet_size=pred_data.get("recommended_bet_size") or recommendation.get("recommended_units") if isinstance(recommendation, dict) else None,
+                    prediction_hash=str(pred_hash),
+                    created_at=datetime.utcnow()
+                )
+                
+                db.add(db_prediction)
+                saved_predictions.append(pred_data if isinstance(pred_data, dict) else (pred_obj.to_dict() if hasattr(pred_obj, 'to_dict') else {}))
+                saved_count += 1
+                
+            except Exception as e:
+                # Log error but continue with other predictions
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error saving prediction to database: {e}", exc_info=True)
+                errors.append(f"Error saving prediction: {str(e)}")
+                continue
+        
+        # Commit all saved predictions
+        if saved_count > 0:
+            await db.commit()
+        
         return GeneratePredictionsResponse(
-            generated_count=result["generated_count"],
-            predictions=result["predictions"],
-            errors=result.get("errors", [])
+            generated_count=saved_count,
+            predictions=saved_predictions,
+            errors=errors
         )
     except Exception as e:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate predictions: {str(e)}"

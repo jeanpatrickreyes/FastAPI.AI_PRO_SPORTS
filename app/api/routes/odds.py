@@ -562,18 +562,30 @@ async def refresh_odds(
     from app.services.collectors.odds_collector import odds_collector
     
     try:
+        # Collect odds from TheOddsAPI
         if sport:
-            result = await odds_collector.collect_odds(sport_code=sport.upper())
+            result = await odds_collector.collect(sport_code=sport.upper())
         else:
-            result = await odds_collector.collect_all_odds()
+            result = await odds_collector.collect()
+        
+        if not result.success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to collect odds: {result.error}"
+            )
+        
+        # Save to database
+        saved_count = 0
+        if result.data:
+            saved_count = await odds_collector.save_to_database(result.data, db)
         
         # Clear odds cache
         await cache_manager.delete_pattern("odds:*")
         
         return OddsRefreshResponse(
             status="success",
-            games_updated=result.get("games_updated", 0),
-            odds_recorded=result.get("odds_recorded", 0),
+            games_updated=result.records_count,  # Number of odds records collected
+            odds_recorded=saved_count,  # Number actually saved to DB
             timestamp=datetime.utcnow()
         )
     except Exception as e:
@@ -627,3 +639,68 @@ async def get_odds_api_status(
         "reset_date": status.get("reset_date"),
         "last_request": status.get("last_request")
     }
+
+
+@router.get("/all", response_model=List[dict])
+async def get_all_odds(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of odds to return"),
+    sport: Optional[str] = Query(None, description="Filter by sport code"),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Get all odds from the database.
+    Useful for viewing what odds have been collected.
+    """
+    query = """
+        SELECT 
+            o.id,
+            o.game_id,
+            g.sport_code,
+            g.game_date,
+            ht.name as home_team,
+            at.name as away_team,
+            sb.name as sportsbook_name,
+            o.market_type,
+            o.selection,
+            o.price,
+            o.line,
+            o.is_current,
+            o.recorded_at
+        FROM odds o
+        JOIN games g ON o.game_id = g.id
+        JOIN teams ht ON g.home_team_id = ht.id
+        JOIN teams at ON g.away_team_id = at.id
+        JOIN sportsbooks sb ON o.sportsbook_id = sb.id
+        WHERE o.is_current = true
+    """
+    
+    params = {}
+    if sport:
+        query += " AND g.sport_code = :sport"
+        params["sport"] = sport.upper()
+    
+    query += " ORDER BY o.recorded_at DESC LIMIT :limit"
+    params["limit"] = limit
+    
+    result = await db.execute(query, params)
+    rows = result.fetchall()
+    
+    return [
+        {
+            "id": str(row.id),
+            "game_id": str(row.game_id),
+            "sport_code": row.sport_code,
+            "game_date": row.game_date.isoformat() if row.game_date else None,
+            "home_team": row.home_team,
+            "away_team": row.away_team,
+            "sportsbook": row.sportsbook_name,
+            "market_type": row.market_type,
+            "selection": row.selection,
+            "price": row.price,
+            "line": row.line,
+            "is_current": row.is_current,
+            "recorded_at": row.recorded_at.isoformat() if row.recorded_at else None,
+        }
+        for row in rows
+    ]
