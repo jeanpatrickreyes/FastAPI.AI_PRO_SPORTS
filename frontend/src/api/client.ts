@@ -96,6 +96,11 @@ class APIClient {
     return data;
   }
 
+  async generatePredictions(params?: { sport_code?: string; bet_types?: string[] }) {
+    const { data } = await this.client.post('/predictions/generate', params || {});
+    return data;
+  }
+
   // Games
   async getGames(params?: { sport?: string; date?: string }) {
     const { data } = await this.client.get('/games', { params });

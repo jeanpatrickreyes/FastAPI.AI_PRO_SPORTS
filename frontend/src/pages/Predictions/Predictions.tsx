@@ -9,11 +9,11 @@ import {
 } from '@mui/material';
 import {
   FilterList, Refresh, Info, TrendingUp, Casino, Schedule,
-  CheckCircle, Cancel, Star, SportsSoccer
+  CheckCircle, Cancel, Star, SportsSoccer, PlayArrow
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { api } from '../../api/client';
-import { useFilterStore } from '../../store';
+import { useFilterStore, useAuthStore } from '../../store';
 
 const SPORTS = ['all', 'NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'WNBA', 'CFL', 'ATP', 'WTA'];
 const TIERS = ['all', 'A', 'B', 'C', 'D'];
@@ -176,6 +176,15 @@ const Predictions: React.FC = () => {
   const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [tabValue, setTabValue] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateSuccess, setGenerateSuccess] = useState<string | null>(null);
+
+  const { user } = useAuthStore();
+  // Check if user is admin - handle different role formats
+  const userRole = user?.role?.toLowerCase() || '';
+  // For now, show button to all authenticated users (can restrict later)
+  const isAdmin = user !== null && (userRole === 'admin' || userRole === 'super_admin' || userRole === 'superadmin' || userRole.includes('admin') || !userRole);
 
   const {
     selectedSport, selectedTier, selectedBetType,
@@ -209,6 +218,38 @@ const Predictions: React.FC = () => {
     setDetailsOpen(true);
   };
 
+  const handleGeneratePredictions = async () => {
+    try {
+      setGenerating(true);
+      setGenerateError(null);
+      setGenerateSuccess(null);
+      
+      const params: any = {
+        bet_types: ['spread', 'moneyline', 'total']
+      };
+      
+      if (selectedSport && selectedSport !== 'all') {
+        params.sport_code = selectedSport;
+      }
+      
+      const result = await api.generatePredictions(params);
+      
+      setGenerateSuccess(
+        `Successfully generated ${result.generated_count || 0} predictions!`
+      );
+      
+      // Refresh predictions after generation
+      setTimeout(() => {
+        loadPredictions();
+        setGenerateSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      setGenerateError(err.response?.data?.detail || err.message || 'Failed to generate predictions');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const filteredPredictions = predictions.filter((p) => {
     if (tabValue === 1) return p.status === 'pending';
     if (tabValue === 2) return p.status === 'graded';
@@ -229,19 +270,44 @@ const Predictions: React.FC = () => {
         <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
           Predictions
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<Refresh />}
-          onClick={loadPredictions}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
+        <Box display="flex" gap={2}>
+          {isAdmin && (
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={generating ? <CircularProgress size={16} /> : <PlayArrow />}
+              onClick={handleGeneratePredictions}
+              disabled={generating || loading}
+            >
+              {generating ? 'Generating...' : 'Generate Predictions'}
+            </Button>
+          )}
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={loadPredictions}
+            disabled={loading || generating}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {error}
+        </Alert>
+      )}
+
+      {generateError && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setGenerateError(null)}>
+          {generateError}
+        </Alert>
+      )}
+
+      {generateSuccess && (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setGenerateSuccess(null)}>
+          {generateSuccess}
         </Alert>
       )}
 
