@@ -16,7 +16,7 @@ from sqlalchemy import (
     ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -318,7 +318,10 @@ class Game(Base):
     season_id: Mapped[Optional[UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("seasons.id"), nullable=True)
     
     game_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[GameStatus] = mapped_column(Enum(GameStatus), default=GameStatus.SCHEDULED)
+    status: Mapped[GameStatus] = mapped_column(
+        Enum(GameStatus, native_enum=False, length=20),
+        default=GameStatus.SCHEDULED
+    )
     
     # Scores
     home_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

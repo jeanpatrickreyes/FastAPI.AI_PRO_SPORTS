@@ -6,7 +6,7 @@ Collects real-time odds from 40+ sportsbooks via TheOddsAPI.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -253,6 +253,8 @@ class OddsCollector(BaseCollector):
         sportsbook_cache: Dict[str, UUID] = {}
         
         for record in odds_data:
+            # Use savepoint to isolate each record so one failure doesn't abort the entire transaction
+            savepoint = await session.begin_nested()
             try:
                 book_key = record["sportsbook_key"]
                 if book_key not in sportsbook_cache:
@@ -279,6 +281,7 @@ class OddsCollector(BaseCollector):
                     )
                     if not game:
                         logger.warning(f"Could not create game for {record.get('external_id')}")
+                        await savepoint.rollback()
                         continue
                 
                 existing_odds = await session.execute(
@@ -322,10 +325,12 @@ class OddsCollector(BaseCollector):
                     is_current=True,
                 )
                 session.add(new_odds)
+                await savepoint.commit()
                 saved_count += 1
                 
             except Exception as e:
-                logger.error(f"Error saving odds record: {e}")
+                await savepoint.rollback()
+                logger.error(f"Error saving odds record: {e}", exc_info=True)
                 continue
         
         await session.commit()
@@ -356,13 +361,63 @@ class OddsCollector(BaseCollector):
             home_team = await self._get_or_create_team(session, sport.id, home_team_name)
             away_team = await self._get_or_create_team(session, sport.id, away_team_name)
             
-            # Parse game date
+            # Parse game date and ensure it's timezone-naive UTC
             commence_time = record.get("commence_time")
             if isinstance(commence_time, str):
-                from dateutil import parser
-                game_date = parser.parse(commence_time)
+                # Handle ISO format strings - use fromisoformat for better UTC handling
+                try:
+                    # Replace 'Z' with '+00:00' for UTC (fromisoformat doesn't handle 'Z' directly in Python < 3.11)
+                    if commence_time.endswith('Z'):
+                        dt_str = commence_time[:-1] + '+00:00'
+                        parsed_dt = datetime.fromisoformat(dt_str)
+                    else:
+                        parsed_dt = datetime.fromisoformat(commence_time)
+                except (ValueError, AttributeError):
+                    # Fallback to dateutil parser for non-ISO formats
+                    from dateutil import parser
+                    parsed_dt = parser.parse(commence_time)
+                
+                # Convert to UTC if timezone-aware, then create a new naive datetime
+                if parsed_dt.tzinfo is not None:
+                    # Convert to UTC and extract the components to create a new naive datetime
+                    utc_dt = parsed_dt.astimezone(timezone.utc)
+                    game_date = datetime(
+                        utc_dt.year, utc_dt.month, utc_dt.day,
+                        utc_dt.hour, utc_dt.minute, utc_dt.second,
+                        utc_dt.microsecond
+                    )
+                else:
+                    # Already naive, create new datetime object to ensure it's truly naive
+                    game_date = datetime(
+                        parsed_dt.year, parsed_dt.month, parsed_dt.day,
+                        parsed_dt.hour, parsed_dt.minute, parsed_dt.second,
+                        parsed_dt.microsecond
+                    )
+            elif isinstance(commence_time, datetime):
+                # If it's already a datetime object, convert to naive UTC
+                if commence_time.tzinfo is not None:
+                    # Convert to UTC and extract components to create new naive datetime
+                    utc_dt = commence_time.astimezone(timezone.utc)
+                    game_date = datetime(
+                        utc_dt.year, utc_dt.month, utc_dt.day,
+                        utc_dt.hour, utc_dt.minute, utc_dt.second,
+                        utc_dt.microsecond
+                    )
+                else:
+                    # Already naive, create new datetime to ensure it's truly naive
+                    game_date = datetime(
+                        commence_time.year, commence_time.month, commence_time.day,
+                        commence_time.hour, commence_time.minute, commence_time.second,
+                        commence_time.microsecond
+                    )
             else:
-                game_date = datetime.utcnow()
+                # Default to naive UTC datetime
+                now_utc = datetime.now(timezone.utc)
+                game_date = datetime(
+                    now_utc.year, now_utc.month, now_utc.day,
+                    now_utc.hour, now_utc.minute, now_utc.second,
+                    now_utc.microsecond
+                )
             
             # Create game
             game = Game(

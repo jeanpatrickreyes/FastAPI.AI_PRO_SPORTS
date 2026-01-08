@@ -66,6 +66,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY:-ai-pro-sports-secret-key-change-me-in-production-32chars}
       - ODDS_API_KEY=${ODDS_API_KEY}
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:8080"]
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs
