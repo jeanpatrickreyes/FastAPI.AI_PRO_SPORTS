@@ -160,6 +160,14 @@ class BaseCollector(ABC):
             try:
                 self.rate_limiter.add_request()
                 
+                # Log the request
+                full_url = f"{self.base_url}{endpoint}"
+                logger.info(f"[{self.name}] 🌐 Making {method} request to: {full_url}")
+                print(f"[{self.name}] 🌐 Making {method} request to: {full_url}")
+                if params:
+                    logger.debug(f"[{self.name}] Request params: {params}")
+                    print(f"[{self.name}] Request params: {params}")
+                
                 response = await client.request(
                     method=method,
                     url=endpoint,
@@ -167,6 +175,9 @@ class BaseCollector(ABC):
                     json=json_data,
                     headers=self._get_headers(),
                 )
+                
+                logger.info(f"[{self.name}] 📥 Response status: {response.status_code}")
+                print(f"[{self.name}] 📥 Response status: {response.status_code}")
                 
                 # Handle rate limit response
                 if response.status_code == 429:
@@ -176,7 +187,10 @@ class BaseCollector(ABC):
                     continue
                 
                 response.raise_for_status()
-                return response.json()
+                json_data = response.json()
+                logger.info(f"[{self.name}] ✅ Successfully fetched data: {len(json_data) if isinstance(json_data, list) else 'object'} items")
+                print(f"[{self.name}] ✅ HTTP {response.status_code} - Received data")
+                return json_data
                 
             except httpx.HTTPStatusError as e:
                 last_error = e

@@ -274,16 +274,39 @@ def data():
 
 
 @data.command()
-@click.option("--sport", "-s", required=True, help="Sport code")
+@click.option("--sport", "-s", required=True, help="Sport code (e.g., NBA, NFL)")
 def collect_odds(sport: str):
-    """Collect odds from TheOddsAPI"""
-    console.print(f"[yellow]Collecting odds for {sport}...[/yellow]")
+    """Collect odds from TheOddsAPI and save to database"""
+    from app.services.collectors.odds_collector import odds_collector
+    from app.core.database import get_database_manager
     
-    # from app.services.collectors.odds_collector import OddsCollector
-    # collector = OddsCollector()
-    # asyncio.run(collector.collect(sport))
+    async def run():
+        db_manager = get_database_manager()
+        await db_manager.initialize()
+        
+        console.print(f"[yellow]Collecting odds for {sport.upper()}...[/yellow]")
+        
+        # Collect odds
+        result = await odds_collector.collect(sport_code=sport.upper())
+        
+        if not result.success:
+            console.print(f"[red]✗[/red] Failed to collect odds: {result.error}")
+            return
+        
+        console.print(f"[green]✓[/green] Collected {result.records_count} odds records")
+        
+        # Save to database
+        if result.data:
+            console.print(f"[yellow]Saving to database...[/yellow]")
+            async with db_manager.session() as session:
+                saved_count = await odds_collector.save_to_database(result.data, session)
+                console.print(f"[green]✓[/green] Saved {saved_count} odds records to database")
+        else:
+            console.print(f"[yellow]No data to save[/yellow]")
+        
+        await db_manager.close()
     
-    console.print(f"[green]✓[/green] Odds collected for {sport}")
+    asyncio.run(run())
 
 
 @data.command()

@@ -11,6 +11,8 @@ import {
   Palette, AttachMoney, Psychology, Api
 } from '@mui/icons-material';
 import { useSettingsStore, useAuthStore } from '../../store';
+import { api } from '../../api/client';
+import { Refresh, CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -28,6 +30,9 @@ const Settings: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [saved, setSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [refreshingOdds, setRefreshingOdds] = useState(false);
+  const [oddsRefreshResult, setOddsRefreshResult] = useState<{success: boolean; message: string} | null>(null);
+  const [oddsSport, setOddsSport] = useState('NBA');
   
   const { user } = useAuthStore();
   const {
@@ -58,6 +63,26 @@ const Settings: React.FC = () => {
   const handleSave = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleRefreshOdds = async () => {
+    setRefreshingOdds(true);
+    setOddsRefreshResult(null);
+    try {
+      const result = await api.refreshOdds(oddsSport);
+      setOddsRefreshResult({
+        success: true,
+        message: `Successfully collected ${result.odds_recorded || 0} odds records for ${oddsSport}`
+      });
+    } catch (error: any) {
+      setOddsRefreshResult({
+        success: false,
+        message: error.response?.data?.detail || error.message || 'Failed to refresh odds'
+      });
+    } finally {
+      setRefreshingOdds(false);
+      setTimeout(() => setOddsRefreshResult(null), 5000);
+    }
   };
 
   return (
@@ -425,6 +450,50 @@ const Settings: React.FC = () => {
             />
             <Button variant="outlined" sx={{ mr: 1 }}>Regenerate Key</Button>
             <Button variant="outlined" color="error">Revoke Key</Button>
+
+            <Divider sx={{ my: 3 }} />
+
+            <Typography variant="h6" gutterBottom>Data Collection</Typography>
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth>
+                  <InputLabel>Sport</InputLabel>
+                  <Select
+                    value={oddsSport}
+                    label="Sport"
+                    onChange={(e) => setOddsSport(e.target.value)}
+                  >
+                    <MenuItem value="NBA">NBA</MenuItem>
+                    <MenuItem value="NFL">NFL</MenuItem>
+                    <MenuItem value="NHL">NHL</MenuItem>
+                    <MenuItem value="MLB">MLB</MenuItem>
+                    <MenuItem value="NCAAB">NCAAB</MenuItem>
+                    <MenuItem value="NCAAF">NCAAF</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={8}>
+                <Button
+                  variant="contained"
+                  startIcon={refreshingOdds ? <Refresh /> : <Refresh />}
+                  onClick={handleRefreshOdds}
+                  disabled={refreshingOdds}
+                  sx={{ height: '56px' }}
+                >
+                  {refreshingOdds ? 'Refreshing Odds...' : 'Refresh Odds Data'}
+                </Button>
+              </Grid>
+            </Grid>
+            
+            {oddsRefreshResult && (
+              <Alert 
+                severity={oddsRefreshResult.success ? 'success' : 'error'}
+                icon={oddsRefreshResult.success ? <CheckCircle /> : <ErrorIcon />}
+                sx={{ mb: 2 }}
+              >
+                {oddsRefreshResult.message}
+              </Alert>
+            )}
 
             <Divider sx={{ my: 3 }} />
 

@@ -3,6 +3,7 @@ AI PRO SPORTS - Odds API Routes
 Enterprise-grade odds management with multi-sportsbook support
 """
 
+import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
-from app.core.cache import cache_manager
+from app.core.cache import cache_manager, CachePrefix
+from app.core.config import ODDS_API_SPORT_KEYS
+from app.models import User, UserRole
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["odds"])
@@ -97,6 +102,77 @@ class OddsRefreshResponse(BaseModel):
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
+
+# IMPORTANT: Specific routes must come before parameterized routes like /{game_id}
+# FastAPI matches routes in order, so /preview must come before /{game_id}
+
+@router.get("/preview", response_model=dict)
+async def preview_odds(
+    sport: str = Query(..., description="Sport code (e.g., NBA, NFL)"),
+    markets: Optional[str] = Query("spreads,h2h,totals", description="Comma-separated markets"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Preview raw odds data from TheOddsAPI before saving to database.
+    Requires admin role.
+    Returns the raw API response and parsed data.
+    """
+    user_role = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+    if user_role not in ["admin", "super_admin", "system"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    
+    from app.services.collectors.odds_collector import odds_collector
+    
+    try:
+        # Get raw API response
+        api_sport_key = ODDS_API_SPORT_KEYS.get(sport.upper())
+        if not api_sport_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown sport code: {sport}"
+            )
+        
+        markets_list = [m.strip() for m in markets.split(",")] if markets else ["spreads", "h2h", "totals"]
+        
+        params = {
+            "apiKey": odds_collector.api_key,
+            "regions": "us",
+            "markets": ",".join(markets_list),
+            "oddsFormat": "american",
+            "commenceTimeFrom": "",
+            "commenceTimeTo": "",
+        }
+        
+        # Get raw data from API
+        raw_data = await odds_collector.get(f"/sports/{api_sport_key}/odds", params=params)
+        
+        # Parse the data
+        parsed_data = odds_collector._parse_odds_response(raw_data, sport.upper())
+        
+        return {
+            "sport": sport.upper(),
+            "api_sport_key": api_sport_key,
+            "markets": markets_list,
+            "raw_events_count": len(raw_data),
+            "parsed_records_count": len(parsed_data),
+            "raw_api_response": raw_data[:3] if len(raw_data) > 3 else raw_data,  # First 3 events
+            "parsed_data_sample": parsed_data[:10] if len(parsed_data) > 10 else parsed_data,  # First 10 records
+            "sample_event_structure": raw_data[0] if raw_data else None,
+            "metadata": {
+                "total_events": len(raw_data),
+                "total_parsed_records": len(parsed_data),
+                "sportsbooks_in_sample": list(set([r.get("sportsbook_name") for r in parsed_data[:20]])) if parsed_data else [],
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview odds: {str(e)}"
+        )
+
 
 @router.get("/{game_id}", response_model=GameOdds)
 async def get_game_odds(
@@ -547,13 +623,14 @@ async def get_live_odds(
 async def refresh_odds(
     sport: Optional[str] = Query(None, description="Sport code to refresh"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Trigger refresh of odds from TheOddsAPI.
     Requires admin role.
     """
-    if current_user.get("role") not in ["admin", "system"]:
+    # Check admin role
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
@@ -562,6 +639,8 @@ async def refresh_odds(
     from app.services.collectors.odds_collector import odds_collector
     
     try:
+        logger.info(f"Starting odds refresh for sport: {sport or 'all'}")
+        
         # Collect odds from TheOddsAPI
         if sport:
             result = await odds_collector.collect(sport_code=sport.upper())
@@ -569,18 +648,28 @@ async def refresh_odds(
             result = await odds_collector.collect()
         
         if not result.success:
+            error_msg = f"Failed to collect odds: {result.error}"
+            logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to collect odds: {result.error}"
+                detail=error_msg
             )
+        
+        logger.info(f"Collected {result.records_count} odds records")
         
         # Save to database
         saved_count = 0
         if result.data:
             saved_count = await odds_collector.save_to_database(result.data, db)
+            logger.info(f"Saved {saved_count} odds records to database")
         
         # Clear odds cache
-        await cache_manager.delete_pattern("odds:*")
+        try:
+            await cache_manager.delete_pattern("*", prefix=CachePrefix.ODDS)
+            logger.info("Cleared odds cache")
+        except Exception as cache_error:
+            logger.warning(f"Failed to clear cache: {cache_error}")
+            # Don't fail the request if cache clearing fails
         
         return OddsRefreshResponse(
             status="success",
@@ -588,10 +677,15 @@ async def refresh_odds(
             odds_recorded=saved_count,  # Number actually saved to DB
             timestamp=datetime.utcnow()
         )
+    except HTTPException:
+        # Re-raise HTTPExceptions as-is
+        raise
     except Exception as e:
+        error_msg = f"Failed to refresh odds: {str(e)}"
+        logger.error(error_msg, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to refresh odds: {str(e)}"
+            detail=error_msg
         )
 
 
@@ -617,12 +711,12 @@ async def get_available_sportsbooks(
 
 @router.get("/api-status")
 async def get_odds_api_status(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get TheOddsAPI rate limit status.
     """
-    if current_user.get("role") not in ["admin", "system"]:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"

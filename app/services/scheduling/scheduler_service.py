@@ -139,6 +139,10 @@ class SchedulerService:
         
         self._scheduler.start()
         self._running = True
+        
+        # Run initial odds collection immediately on startup
+        asyncio.create_task(self._run_initial_odds_collection())
+        
         logger.info("Scheduler started")
     
     async def stop(self):
@@ -156,7 +160,7 @@ class SchedulerService:
                 job_id="collect_odds",
                 name="Collect Live Odds",
                 category=JobCategory.DATA_COLLECTION,
-                func=self._dummy_job,  # Will be replaced with actual function
+                func=self._collect_odds_job,  # Actual implementation
                 trigger="interval",
                 trigger_args={"seconds": settings.ODDS_REFRESH_INTERVAL}
             ),
@@ -288,6 +292,54 @@ class SchedulerService:
     async def _dummy_job(self):
         """Placeholder job function"""
         pass
+    
+    async def _collect_odds_job(self):
+        """Collect odds from TheOddsAPI and save to database."""
+        try:
+            from app.services.collectors.odds_collector import odds_collector
+            from app.core.database import db_manager
+            from app.core.cache import cache_manager
+            
+            logger.info("[Scheduler] Starting odds collection job...")
+            
+            # Collect odds from TheOddsAPI
+            result = await odds_collector.collect()
+            
+            if not result.success:
+                logger.error(f"[Scheduler] Odds collection failed: {result.error}")
+                return
+            
+            # Save to database
+            saved_count = 0
+            if result.data:
+                async with db_manager.session() as session:
+                    try:
+                        saved_count = await odds_collector.save_to_database(result.data, session)
+                        await session.commit()
+                        logger.info(f"[Scheduler] ✅ Saved {saved_count} odds records to database")
+                    except Exception as e:
+                        await session.rollback()
+                        logger.error(f"[Scheduler] Error saving odds to database: {e}")
+                        raise
+            
+            # Clear odds cache
+            await cache_manager.delete_pattern("odds:*")
+            
+            logger.info(f"[Scheduler] ✅ Odds collection completed: {result.records_count} collected, {saved_count} saved")
+            
+        except Exception as e:
+            logger.error(f"[Scheduler] Error in odds collection job: {e}", exc_info=True)
+            # Don't raise - let scheduler continue with other jobs
+    
+    async def _run_initial_odds_collection(self):
+        """Run odds collection immediately on startup."""
+        # Small delay to ensure all services are ready
+        await asyncio.sleep(5)
+        try:
+            logger.info("[Scheduler] Running initial odds collection on startup...")
+            await self._collect_odds_job()
+        except Exception as e:
+            logger.error(f"[Scheduler] Initial odds collection failed: {e}", exc_info=True)
     
     def register_job(self, job: ScheduledJob):
         """Register a scheduled job"""

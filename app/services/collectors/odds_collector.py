@@ -129,10 +129,27 @@ class OddsCollector(BaseCollector):
         }
         
         try:
+            logger.info(f"[OddsCollector] Fetching odds for {sport_code} (API key: {api_sport_key})")
+            logger.info(f"[OddsCollector] Request params: {params}")
+            print(f"[OddsCollector] 🎲 Fetching odds for {sport_code} from TheOddsAPI...")
+            print(f"[OddsCollector] URL: /sports/{api_sport_key}/odds")
+            print(f"[OddsCollector] Params: {params}")
+            
             data = await self.get(f"/sports/{api_sport_key}/odds", params=params)
-            return self._parse_odds_response(data, sport_code)
+            
+            logger.info(f"[OddsCollector] ✅ Received {len(data)} events from TheOddsAPI for {sport_code}")
+            print(f"[OddsCollector] ✅ Successfully fetched {len(data)} events from TheOddsAPI")
+            if data:
+                print(f"[OddsCollector] First event sample: {data[0] if len(data) > 0 else 'No data'}")
+            
+            parsed = self._parse_odds_response(data, sport_code)
+            logger.info(f"[OddsCollector] ✅ Parsed {len(parsed)} odds records for {sport_code}")
+            print(f"[OddsCollector] ✅ Parsed {len(parsed)} odds records")
+            
+            return parsed
         except Exception as e:
             logger.error(f"Failed to fetch {sport_code} odds: {e}")
+            print(f"[OddsCollector] ❌ Error fetching odds: {e}")
             raise
     
     def _parse_odds_response(
@@ -258,7 +275,7 @@ class OddsCollector(BaseCollector):
                     game = await self._create_game_from_odds_record(
                         session,
                         record,
-                        sport_code
+                        record.get("sport_code")
                     )
                     if not game:
                         logger.warning(f"Could not create game for {record.get('external_id')}")

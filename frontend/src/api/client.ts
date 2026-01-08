@@ -118,6 +118,12 @@ class APIClient {
     return data;
   }
 
+  async refreshOdds(sport?: string) {
+    const params = sport ? { sport } : {};
+    const { data } = await this.client.post('/odds/refresh', null, { params });
+    return data;
+  }
+
   // Player Props
   async getPlayerProps(gameId: string) {
     const { data } = await this.client.get(`/player-props/${gameId}`);
