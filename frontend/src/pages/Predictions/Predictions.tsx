@@ -440,12 +440,27 @@ const Predictions: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Tabs */}
-      <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} sx={{ mb: 2 }}>
-        <Tab label={`All (${predictions.length})`} />
-        <Tab label={`Pending (${stats.pending})`} />
-        <Tab label={`Graded (${predictions.length - stats.pending})`} />
-      </Tabs>
+      {/* Tabs and Pagination */}
+      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+        <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
+          <Tab label={`All (${predictions.length})`} />
+          <Tab label={`Pending (${stats.pending})`} />
+          <Tab label={`Graded (${predictions.length - stats.pending})`} />
+        </Tabs>
+        <TablePagination
+          component="div"
+          count={total}
+          page={page}
+          onPageChange={handleChangePage}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={handleChangeRowsPerPage}
+          rowsPerPageOptions={[25, 50, 100]}
+          labelRowsPerPage="Rows per page:"
+          labelDisplayedRows={({ from, to, count }) => `${from}-${to} of ${count !== -1 ? count : `more than ${to}`}`}
+          showFirstButton
+          showLastButton
+        />
+      </Box>
 
       {/* Predictions Table */}
       <Card>
@@ -529,17 +544,6 @@ const Predictions: React.FC = () => {
             </Table>
           )}
         </TableContainer>
-        <TablePagination
-          component="div"
-          count={total}
-          page={page}
-          onPageChange={handleChangePage}
-          rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          rowsPerPageOptions={[25, 50, 100]}
-          labelRowsPerPage="Rows per page:"
-          labelDisplayedRows={({ from, to, count }) => `${from}-${to} of ${count !== -1 ? count : `more than ${to}`}`}
-        />
       </Card>
 
       <PredictionDetails
