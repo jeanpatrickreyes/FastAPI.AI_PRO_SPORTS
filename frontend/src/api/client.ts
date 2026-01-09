@@ -76,7 +76,7 @@ class APIClient {
   }
 
   // Predictions
-  async getPredictions(params?: { sport?: string; date?: string; tier?: string }) {
+  async getPredictions(params?: { sport?: string; date?: string; signal_tier?: string; bet_type?: string; page?: number; per_page?: number }) {
     const { data } = await this.client.get('/predictions', { params });
     return data;
   }

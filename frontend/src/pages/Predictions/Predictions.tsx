@@ -5,7 +5,7 @@ import {
   TableCell, TableContainer, TableHead, TableRow, Paper, Select,
   MenuItem, FormControl, InputLabel, TextField, Button, IconButton,
   Tooltip, Dialog, DialogTitle, DialogContent, DialogActions,
-  LinearProgress, Alert, Tabs, Tab, CircularProgress
+  LinearProgress, Alert, Tabs, Tab, CircularProgress, TablePagination
 } from '@mui/material';
 import {
   FilterList, Refresh, Info, TrendingUp, Casino, Schedule,
@@ -179,6 +179,9 @@ const Predictions: React.FC = () => {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [generateSuccess, setGenerateSuccess] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+  const [total, setTotal] = useState(0);
 
   const { user } = useAuthStore();
   // Check if user is admin - handle different role formats
@@ -192,25 +195,42 @@ const Predictions: React.FC = () => {
   } = useFilterStore();
 
   useEffect(() => {
+    setPage(0); // Reset to first page when filters change
+  }, [selectedSport, selectedBetType]); // Removed selectedTier - filtering client-side
+
+  useEffect(() => {
     loadPredictions();
-  }, [selectedSport, selectedTier, selectedBetType]);
+  }, [selectedSport, selectedBetType, page, rowsPerPage]); // Removed selectedTier - filtering client-side
 
   const loadPredictions = async () => {
     try {
       setLoading(true);
-      const params: any = {};
+      const params: any = {
+        page: page + 1, // Backend uses 1-based pagination
+        per_page: rowsPerPage
+      };
       if (selectedSport !== 'all') params.sport = selectedSport;
-      if (selectedTier !== 'all') params.tier = selectedTier;
+      // Tier filtering is done client-side, not sent to API
       if (selectedBetType !== 'all') params.bet_type = selectedBetType;
 
       const data = await api.getPredictions(params);
       setPredictions(data.predictions || []);
+      setTotal(data.total || 0);
       setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to load predictions');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   };
 
   const handleViewDetails = (prediction: Prediction) => {
@@ -251,8 +271,18 @@ const Predictions: React.FC = () => {
   };
 
   const filteredPredictions = predictions.filter((p) => {
-    if (tabValue === 1) return p.status === 'pending';
-    if (tabValue === 2) return p.status === 'graded';
+    // Filter by tab (ALL/PENDING/GRADED)
+    if (tabValue === 1) {
+      if (p.status !== 'pending') return false;
+    } else if (tabValue === 2) {
+      if (p.status !== 'graded' && p.status !== 'win' && p.status !== 'loss' && p.status !== 'push') return false;
+    }
+    
+    // Filter by tier (client-side filtering)
+    if (selectedTier !== 'all' && p.signal_tier !== selectedTier) {
+      return false;
+    }
+    
     return true;
   });
 
@@ -499,6 +529,17 @@ const Predictions: React.FC = () => {
             </Table>
           )}
         </TableContainer>
+        <TablePagination
+          component="div"
+          count={total}
+          page={page}
+          onPageChange={handleChangePage}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={handleChangeRowsPerPage}
+          rowsPerPageOptions={[25, 50, 100]}
+          labelRowsPerPage="Rows per page:"
+          labelDisplayedRows={({ from, to, count }) => `${from}-${to} of ${count !== -1 ? count : `more than ${to}`}`}
+        />
       </Card>
 
       <PredictionDetails

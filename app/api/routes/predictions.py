@@ -8,7 +8,7 @@ from typing import Optional, List
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, and_, or_, text
+from sqlalchemy import select, func, and_, or_, text, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, load_only, joinedload
 
@@ -23,7 +23,8 @@ from app.models import (
     Team,
     SignalTier, 
     User, 
-    UserRole
+    UserRole,
+    GameStatus
 )
 
 
@@ -159,7 +160,15 @@ async def get_predictions(
     if bet_type:
         conditions.append(DBPrediction.bet_type == bet_type)
     if signal_tier:
-        conditions.append(DBPrediction.signal_tier == signal_tier)
+        # Compare using string value since database column is VARCHAR(1), not PostgreSQL enum
+        # Cast the enum column to string for comparison to avoid enum type casting
+        try:
+            tier_value = signal_tier.upper()
+            # Cast the enum column to string and compare with string value
+            conditions.append(cast(DBPrediction.signal_tier, String) == tier_value)
+        except (ValueError, AttributeError):
+            # Invalid tier value, skip this filter
+            pass
     if date_from:
         conditions.append(func.date(DBPrediction.created_at) >= date_from)
     if date_to:
@@ -711,8 +720,10 @@ async def generate_predictions(
             conditions.append(Game.id.in_([UUID(gid) if isinstance(gid, str) else gid for gid in request.game_ids]))
         
         # Only fetch scheduled games that haven't started yet
-        conditions.append(Game.status == 'scheduled')
-        conditions.append(Game.game_date >= datetime.utcnow())
+        conditions.append(Game.status == GameStatus.SCHEDULED)
+        # Use naive UTC datetime for comparison with TIMESTAMP WITHOUT TIME ZONE
+        now_utc = datetime.utcnow()
+        conditions.append(Game.game_date >= now_utc)
         
         if conditions:
             base_query = base_query.where(and_(*conditions))
@@ -734,7 +745,7 @@ async def generate_predictions(
             return GeneratePredictionsResponse(
                 generated_count=0,
                 predictions=[],
-                errors=["No eligible games found for prediction generation"]
+                errors=[f"No eligible games found for prediction generation (sport_code: {request.sport_code}, game_count: 0)"]
             )
         
         # Get sport codes for all games in a single query
