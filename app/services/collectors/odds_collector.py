@@ -314,26 +314,41 @@ class OddsCollector(BaseCollector):
                 )
                 existing = existing_odds.scalar_one_or_none()
                 
+                # If existing odds exist and data hasn't changed, skip saving
                 if existing:
-                    if (
-                        existing.line != record.get("line") or
-                        existing.price != record.get("price")
-                    ):
-                        movement = OddsMovement(
-                            game_id=game.id,
-                            sportsbook_id=sportsbook_id,
-                            market_type=record["market_type"],
-                            old_line=existing.line,
-                            new_line=record.get("line"),
-                            old_price=existing.price,
-                            new_price=record.get("price"),
-                            movement_size=self._calculate_movement_size(
-                                existing.line, record.get("line")
-                            ),
-                        )
-                        session.add(movement)
-                        existing.is_current = False
+                    # Compare price and line (handle None values)
+                    new_line = record.get("line")
+                    new_price = record.get("price")
+                    
+                    # Check if data has changed
+                    line_changed = (
+                        (existing.line is None) != (new_line is None) or
+                        (existing.line is not None and new_line is not None and existing.line != new_line)
+                    )
+                    price_changed = existing.price != new_price
+                    
+                    if not line_changed and not price_changed:
+                        # Data hasn't changed, skip saving
+                        await savepoint.rollback()
+                        continue
+                    
+                    # Data has changed, create movement record and mark old as not current
+                    movement = OddsMovement(
+                        game_id=game.id,
+                        sportsbook_id=sportsbook_id,
+                        market_type=record["market_type"],
+                        old_line=existing.line,
+                        new_line=new_line,
+                        old_price=existing.price,
+                        new_price=new_price,
+                        movement_size=self._calculate_movement_size(
+                            existing.line, new_line
+                        ),
+                    )
+                    session.add(movement)
+                    existing.is_current = False
                 
+                # Create new odds record (either new or changed)
                 new_odds = Odds(
                     game_id=game.id,
                     sportsbook_id=sportsbook_id,
