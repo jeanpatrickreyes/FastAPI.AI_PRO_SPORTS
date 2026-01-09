@@ -642,12 +642,23 @@ async def refresh_odds(
         logger.info(f"Starting odds refresh for sport: {sport or 'all'}")
         
         # Collect odds from TheOddsAPI
+        # When sport is None, collect() will loop through all sports individually and combine results
         if sport:
             result = await odds_collector.collect(sport_code=sport.upper())
         else:
             result = await odds_collector.collect()
         
-        if not result.success:
+        # Handle partial success: if some data was collected, return success with warnings
+        if not result.success and result.records_count > 0:
+            logger.warning(f"Partial odds collection success with errors: {result.error}")
+            return OddsRefreshResponse(
+                status="partial_success",
+                games_updated=result.records_count,
+                odds_recorded=result.records_count, # Assuming all collected records are saved
+                timestamp=datetime.utcnow(),
+                message=f"Collected some odds with errors: {result.error}"
+            )
+        elif not result.success:
             error_msg = f"Failed to collect odds: {result.error}"
             logger.error(error_msg)
             raise HTTPException(

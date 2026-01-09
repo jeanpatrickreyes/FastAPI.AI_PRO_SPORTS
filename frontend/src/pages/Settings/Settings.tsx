@@ -32,7 +32,7 @@ const Settings: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [refreshingOdds, setRefreshingOdds] = useState(false);
   const [oddsRefreshResult, setOddsRefreshResult] = useState<{success: boolean; message: string} | null>(null);
-  const [oddsSport, setOddsSport] = useState('NBA');
+  const [oddsSport, setOddsSport] = useState('all');
   
   const { user } = useAuthStore();
   const {
@@ -69,10 +69,11 @@ const Settings: React.FC = () => {
     setRefreshingOdds(true);
     setOddsRefreshResult(null);
     try {
-      const result = await api.refreshOdds(oddsSport);
+      const sportParam = oddsSport === 'all' ? undefined : oddsSport;
+      const result = await api.refreshOdds(sportParam);
       setOddsRefreshResult({
         success: true,
-        message: `Successfully collected ${result.odds_recorded || 0} odds records for ${oddsSport}`
+        message: `Successfully collected ${result.odds_recorded || 0} odds records for ${oddsSport === 'all' ? 'all sports' : oddsSport}`
       });
     } catch (error: any) {
       setOddsRefreshResult({
@@ -463,6 +464,7 @@ const Settings: React.FC = () => {
                     label="Sport"
                     onChange={(e) => setOddsSport(e.target.value)}
                   >
+                    <MenuItem value="all">All Sports</MenuItem>
                     <MenuItem value="NBA">NBA</MenuItem>
                     <MenuItem value="NFL">NFL</MenuItem>
                     <MenuItem value="NHL">NHL</MenuItem>

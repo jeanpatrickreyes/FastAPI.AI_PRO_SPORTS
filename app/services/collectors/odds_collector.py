@@ -89,22 +89,41 @@ class OddsCollector(BaseCollector):
         markets = markets or self.MARKETS
         all_odds = []
         errors = []
+        successful_sports = []
         
+        # Tennis sports only support h2h (moneyline) market
+        TENNIS_SPORTS = ["ATP", "WTA"]
+        
+        logger.info(f"Starting collection for {len(sports_to_collect)} sport(s): {sports_to_collect}")
+        
+        # Collect each sport individually and combine results
         for sport in sports_to_collect:
             try:
-                odds_data = await self._collect_sport_odds(sport, markets)
+                # Use only h2h market for tennis sports
+                sport_markets = markets if sport not in TENNIS_SPORTS else ["h2h"]
+                
+                logger.info(f"Collecting {sport} odds data (markets: {sport_markets})")
+                odds_data = await self._collect_sport_odds(sport, sport_markets)
                 all_odds.extend(odds_data)
+                successful_sports.append(sport)
+                logger.info(f"Successfully collected {len(odds_data)} odds records for {sport}")
             except Exception as e:
                 logger.error(f"Error collecting {sport} odds: {e}")
                 errors.append(f"{sport}: {str(e)}")
         
+        # Return success if we collected data for at least one sport
+        # This allows partial success when collecting all sports
+        logger.info(f"Collection complete: {len(successful_sports)}/{len(sports_to_collect)} sports succeeded, {len(all_odds)} total odds records collected")
+        
         return CollectorResult(
-            success=len(errors) == 0,
+            success=len(successful_sports) > 0,
             data=all_odds,
             records_count=len(all_odds),
             error="; ".join(errors) if errors else None,
             metadata={
                 "sports_collected": sports_to_collect,
+                "successful_sports": successful_sports,
+                "failed_sports": [sport for sport in sports_to_collect if sport not in successful_sports],
                 "markets": markets,
                 "requests_remaining": self._requests_remaining,
             },
