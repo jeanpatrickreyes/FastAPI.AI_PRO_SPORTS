@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, load_only
+from sqlalchemy.orm import selectinload, load_only, joinedload
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
@@ -20,6 +20,7 @@ from app.models import (
     PredictionResult,
     Game, 
     Sport,
+    Team,
     SignalTier, 
     User, 
     UserRole
@@ -43,6 +44,15 @@ class PredictionBase(BaseModel):
     id: str  # UUID
     game_id: str  # UUID
     sport_code: Optional[str] = None
+    # Frontend-compatible fields
+    sport: Optional[str] = None  # Alias for sport_code
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    game_time: Optional[datetime] = None  # Game start time (from game_date)
+    line: Optional[float] = None  # Alias for line_at_prediction
+    odds: Optional[int] = None  # Alias for odds_at_prediction
+    status: Optional[str] = None  # Computed: "pending", "win", "loss", "push"
+    # Original fields (kept for backwards compatibility)
     bet_type: str  # spread, moneyline, total
     predicted_side: str
     probability: float
@@ -223,12 +233,25 @@ async def get_predictions(
     for pred in predictions_list:
         sport_code = sport_codes_map.get(pred.game_id) if pred.game_id else None
         pred_result = pred.result
+        game = pred.game if hasattr(pred, 'game') else None
+        
+        # Compute status from is_graded and result
+        status = "pending"
+        if pred_result is not None and pred_result.actual_result:
+            status = pred_result.actual_result.value  # "win", "loss", or "push"
         
         predictions.append(
             PredictionBase(
                 id=str(pred.id),
                 game_id=str(pred.game_id),
                 sport_code=sport_code,
+                sport=sport_code,  # Frontend-compatible field
+                home_team=game.home_team.name if game and game.home_team else None,
+                away_team=game.away_team.name if game and game.away_team else None,
+                game_time=game.game_date if game else None,
+                line=pred.line_at_prediction,  # Frontend-compatible field
+                odds=pred.odds_at_prediction,  # Frontend-compatible field
+                status=status,  # Computed status
                 bet_type=pred.bet_type,
                 predicted_side=pred.predicted_side,
                 probability=pred.probability,
