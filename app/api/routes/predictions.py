@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, or_, text, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, load_only, joinedload
+from sqlalchemy.orm import selectinload, load_only, joinedload, aliased
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
@@ -229,20 +229,42 @@ async def get_predictions(
     result = await db.execute(data_query)
     predictions_list = result.scalars().all()
     
-    # Get sport codes for all games (since Game doesn't have sport relationship)
+    # Get sport codes and team names for all games
     game_ids = [pred.game_id for pred in predictions_list if pred.game_id]
     sport_codes_map = {}
+    team_names_map = {}  # game_id -> {"home_team": name, "away_team": name, "game_date": datetime}
     if game_ids:
+        # Get sport codes
         sport_query = select(Game.id, Sport.code).join(Sport, Game.sport_id == Sport.id).where(Game.id.in_(game_ids))
         sport_result = await db.execute(sport_query)
         sport_codes_map = {row.id: row.code for row in sport_result.all()}
+        
+        # Get team names and game dates using raw SQL to avoid relationship loading issues
+        team_query = text("""
+            SELECT 
+                g.id,
+                g.game_date,
+                ht.name as home_team_name,
+                at.name as away_team_name
+            FROM games g
+            JOIN teams ht ON g.home_team_id = ht.id
+            JOIN teams at ON g.away_team_id = at.id
+            WHERE g.id = ANY(:game_ids)
+        """)
+        team_result = await db.execute(team_query, {"game_ids": [str(gid) for gid in game_ids]})
+        for row in team_result:
+            team_names_map[UUID(str(row.id))] = {
+                "home_team": row.home_team_name,
+                "away_team": row.away_team_name,
+                "game_date": row.game_date
+            }
     
     # Convert to response models
     predictions = []
     for pred in predictions_list:
         sport_code = sport_codes_map.get(pred.game_id) if pred.game_id else None
         pred_result = pred.result
-        game = pred.game if hasattr(pred, 'game') else None
+        game_info = team_names_map.get(pred.game_id, {}) if pred.game_id else {}
         
         # Compute status from is_graded and result
         status = "pending"
@@ -255,9 +277,9 @@ async def get_predictions(
                 game_id=str(pred.game_id),
                 sport_code=sport_code,
                 sport=sport_code,  # Frontend-compatible field
-                home_team=game.home_team.name if game and game.home_team else None,
-                away_team=game.away_team.name if game and game.away_team else None,
-                game_time=game.game_date if game else None,
+                home_team=game_info.get("home_team"),
+                away_team=game_info.get("away_team"),
+                game_time=game_info.get("game_date"),
                 line=pred.line_at_prediction,  # Frontend-compatible field
                 odds=pred.odds_at_prediction,  # Frontend-compatible field
                 status=status,  # Computed status
