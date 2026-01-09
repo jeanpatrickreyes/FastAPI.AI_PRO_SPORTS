@@ -303,11 +303,13 @@ const Predictions: React.FC = () => {
         `Successfully generated ${result.generated_count || 0} predictions!`
       );
       
-      // Refresh predictions after generation
+      // Refresh predictions immediately after generation
+      await loadPredictions();
+      
+      // Clear success message after a short delay
       setTimeout(() => {
-        loadPredictions();
         setGenerateSuccess(null);
-      }, 2000);
+      }, 3000);
     } catch (err: any) {
       setGenerateError(err.response?.data?.detail || err.message || 'Failed to generate predictions');
     } finally {

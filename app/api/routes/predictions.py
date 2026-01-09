@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload, load_only, joinedload
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
-from app.core.cache import cache_manager
+from app.core.cache import cache_manager, CachePrefix
 from app.models import (
     Prediction as DBPrediction, 
     PredictionResult,
@@ -1052,6 +1052,18 @@ async def generate_predictions(
         # Commit all saved predictions
         if saved_count > 0:
             await db.commit()
+            
+            # Clear predictions cache to ensure fresh data is shown immediately
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                deleted_count = await cache_manager.delete_pattern("*", prefix=CachePrefix.PREDICTIONS)
+                logger.info(f"Cleared {deleted_count} prediction cache entries after generation")
+            except Exception as cache_error:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to clear prediction cache: {cache_error}")
+                # Don't fail the request if cache clearing fails
         
         return GeneratePredictionsResponse(
             generated_count=saved_count,
