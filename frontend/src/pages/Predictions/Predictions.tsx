@@ -171,6 +171,7 @@ const getTierColor = (tier: string): string => {
 
 const Predictions: React.FC = () => {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [allPredictionsForStats, setAllPredictionsForStats] = useState<Prediction[]>([]); // All predictions for stats calculation
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
@@ -202,42 +203,52 @@ const Predictions: React.FC = () => {
     loadPredictions();
   }, [selectedSport, selectedBetType, page, rowsPerPage, selectedTier]); // Include selectedTier to refetch when changed
 
+  // Fetch all predictions for stats calculation
+  const fetchAllPredictionsForStats = async (): Promise<Prediction[]> => {
+    const allPredictions: Prediction[] = [];
+    let currentPage = 1;
+    let hasMore = true;
+    const maxPerPage = 100; // Backend limit
+    let totalCount = 0;
+    
+    while (hasMore) {
+      const params: any = {
+        page: currentPage,
+        per_page: maxPerPage
+      };
+      if (selectedSport !== 'all') params.sport = selectedSport;
+      if (selectedBetType !== 'all') params.bet_type = selectedBetType;
+      
+      const data = await api.getPredictions(params);
+      if (data.predictions && data.predictions.length > 0) {
+        allPredictions.push(...data.predictions);
+        totalCount = data.total || 0;
+        // Check if there are more pages
+        const totalPages = Math.ceil(totalCount / maxPerPage);
+        hasMore = currentPage < totalPages;
+        currentPage++;
+      } else {
+        hasMore = false;
+      }
+    }
+    
+    return allPredictions;
+  };
+
   const loadPredictions = async () => {
     try {
       setLoading(true);
       
-      // When tier filter is selected, fetch all pages to get all predictions for client-side filtering
+      // Always fetch all predictions for stats calculation
+      const allPredsForStats = await fetchAllPredictionsForStats();
+      setAllPredictionsForStats(allPredsForStats);
+      
+      // When tier filter is selected, use all predictions for display too
       if (selectedTier !== 'all') {
-        // Fetch all predictions (multiple pages if needed) when tier filter is active
-        const allPredictions: Prediction[] = [];
-        let currentPage = 1;
-        let hasMore = true;
-        const maxPerPage = 100; // Backend limit
-        
-        while (hasMore) {
-          const params: any = {
-            page: currentPage,
-            per_page: maxPerPage
-          };
-          if (selectedSport !== 'all') params.sport = selectedSport;
-          if (selectedBetType !== 'all') params.bet_type = selectedBetType;
-          
-          const data = await api.getPredictions(params);
-          if (data.predictions && data.predictions.length > 0) {
-            allPredictions.push(...data.predictions);
-            // Check if there are more pages
-            const totalPages = Math.ceil((data.total || 0) / maxPerPage);
-            hasMore = currentPage < totalPages;
-            currentPage++;
-          } else {
-            hasMore = false;
-          }
-        }
-        
-        setPredictions(allPredictions);
-        setTotal(allPredictions.length);
+        setPredictions(allPredsForStats);
+        setTotal(allPredsForStats.length);
       } else {
-        // Normal pagination when no tier filter
+        // Normal pagination when no tier filter - fetch current page for display
         const params: any = {
           page: page + 1, // Backend uses 1-based pagination
           per_page: rowsPerPage
@@ -304,6 +315,22 @@ const Predictions: React.FC = () => {
     }
   };
 
+  // Calculate stats from all predictions (not just current page)
+  const statsPredictions = allPredictionsForStats.filter((p) => {
+    // Apply sport and bet type filters (already applied in fetch, but keep for consistency)
+    if (selectedSport !== 'all' && p.sport !== selectedSport) return false;
+    if (selectedBetType !== 'all' && p.bet_type !== selectedBetType) return false;
+    return true;
+  });
+
+  const stats = {
+    total: statsPredictions.length,
+    tierA: statsPredictions.filter((p) => p.signal_tier === 'A').length,
+    pending: statsPredictions.filter((p) => p.status === 'pending').length,
+    winRate: statsPredictions.filter((p) => p.result === 'win').length /
+      Math.max(statsPredictions.filter((p) => p.status === 'graded' || p.status === 'win' || p.status === 'loss' || p.status === 'push').length, 1) * 100,
+  };
+
   const filteredPredictions = predictions.filter((p) => {
     // Filter by tab (ALL/PENDING/GRADED)
     if (tabValue === 1) {
@@ -326,14 +353,6 @@ const Predictions: React.FC = () => {
     : filteredPredictions;
   
   const filteredTotal = selectedTier !== 'all' ? filteredPredictions.length : total;
-
-  const stats = {
-    total: filteredPredictions.length, // Use filtered predictions for stats
-    tierA: filteredPredictions.filter((p) => p.signal_tier === 'A').length,
-    pending: filteredPredictions.filter((p) => p.status === 'pending').length,
-    winRate: filteredPredictions.filter((p) => p.result === 'win').length /
-      Math.max(filteredPredictions.filter((p) => p.status === 'graded' || p.status === 'win' || p.status === 'loss' || p.status === 'push').length, 1) * 100,
-  };
 
   return (
     <Box sx={{ p: 3 }}>
@@ -484,9 +503,9 @@ const Predictions: React.FC = () => {
       {/* Tabs and Pagination */}
       <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
         <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
-          <Tab label={`All (${predictions.length})`} />
+          <Tab label={`All (${selectedTier !== 'all' ? filteredPredictions.length : total})`} />
           <Tab label={`Pending (${stats.pending})`} />
-          <Tab label={`Graded (${predictions.length - stats.pending})`} />
+          <Tab label={`Graded (${selectedTier !== 'all' ? filteredPredictions.length - stats.pending : total - stats.pending})`} />
         </Tabs>
         <TablePagination
           component="div"
