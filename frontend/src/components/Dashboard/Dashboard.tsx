@@ -100,48 +100,65 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       
-      const [predictionsData, bankrollData, dailyReport] = await Promise.all([
+      // Load each endpoint independently so failures don't block predictions
+      const results = await Promise.allSettled([
         api.getPredictionsToday(),
         api.getBankroll(),
         api.getDailyReport(),
       ]);
 
-      setPredictions(predictionsData.predictions || []);
-      setTodayPredictions(predictionsData.predictions || []);
-      setBankroll(bankrollData);
+      const predictionsData = results[0].status === 'fulfilled' ? results[0].value : [];
+      const bankrollData = results[1].status === 'fulfilled' ? results[1].value : { current: 10000, initial: 10000, peak: 10000, low: 10000, total_wagered: 0, total_won: 0, total_lost: 0, roi: 0, win_rate: 0 };
+      const dailyReport = results[2].status === 'fulfilled' ? results[2].value : { win_rate: 0, daily_pl: 0, weekly_roi: 0 };
 
-      const tierACount = (predictionsData.predictions || []).filter(
+      // Backend returns an array directly, not wrapped in an object
+      const predictionsArray = Array.isArray(predictionsData) ? predictionsData : (predictionsData?.predictions || []);
+
+      setPredictions(predictionsArray);
+      setTodayPredictions(predictionsArray);
+      
+      // Handle bankroll data - it might be an array or an object
+      const bankrollObj = Array.isArray(bankrollData) && bankrollData.length > 0 
+        ? bankrollData[0] 
+        : bankrollData;
+      setBankroll(bankrollObj);
+
+      const tierACount = predictionsArray.filter(
         (p: any) => p.signal_tier === 'A'
       ).length;
 
+      const currentBankrollAmount = (Array.isArray(bankrollData) && bankrollData.length > 0)
+        ? bankrollData[0].current_amount || bankrollData[0].current || 0
+        : bankrollObj.current || bankrollObj.current_amount || 0;
+
       setStats({
-        todayPredictions: predictionsData.predictions?.length || 0,
+        todayPredictions: predictionsArray.length || 0,
         tierACount,
         winRate: dailyReport.win_rate || 0,
         dailyPL: dailyReport.daily_pl || 0,
         weeklyROI: dailyReport.weekly_roi || 0,
-        currentBankroll: bankrollData.current || 0,
-        pendingBets: (predictionsData.predictions || []).filter(
+        currentBankroll: currentBankrollAmount,
+        pendingBets: predictionsArray.filter(
           (p: any) => p.status === 'pending'
         ).length,
-        activeSports: [...new Set((predictionsData.predictions || []).map((p: any) => p.sport))],
+        activeSports: [...new Set(predictionsArray.map((p: any) => p.sport))],
       });
 
       // Mock bankroll history for chart
       setBankrollHistory([
-        { date: 'Mon', value: bankrollData.current * 0.95 },
-        { date: 'Tue', value: bankrollData.current * 0.97 },
-        { date: 'Wed', value: bankrollData.current * 0.96 },
-        { date: 'Thu', value: bankrollData.current * 0.99 },
-        { date: 'Fri', value: bankrollData.current * 1.01 },
-        { date: 'Sat', value: bankrollData.current * 1.02 },
-        { date: 'Sun', value: bankrollData.current },
+        { date: 'Mon', value: currentBankrollAmount * 0.95 },
+        { date: 'Tue', value: currentBankrollAmount * 0.97 },
+        { date: 'Wed', value: currentBankrollAmount * 0.96 },
+        { date: 'Thu', value: currentBankrollAmount * 0.99 },
+        { date: 'Fri', value: currentBankrollAmount * 1.01 },
+        { date: 'Sat', value: currentBankrollAmount * 1.02 },
+        { date: 'Sun', value: currentBankrollAmount },
       ]);
 
       setPerformanceByTier([
         { tier: 'Tier A', winRate: 68, count: tierACount },
-        { tier: 'Tier B', winRate: 62, count: Math.floor(predictionsData.predictions?.length * 0.3) || 0 },
-        { tier: 'Tier C', winRate: 57, count: Math.floor(predictionsData.predictions?.length * 0.2) || 0 },
+        { tier: 'Tier B', winRate: 62, count: Math.floor(predictionsArray.length * 0.3) || 0 },
+        { tier: 'Tier C', winRate: 57, count: Math.floor(predictionsArray.length * 0.2) || 0 },
       ]);
 
       setError(null);
@@ -305,7 +322,11 @@ const Dashboard: React.FC = () => {
                       <TableCell>
                         <Chip label={prediction.sport} size="small" />
                       </TableCell>
-                      <TableCell>{prediction.game_name || 'TBD vs TBD'}</TableCell>
+                      <TableCell>
+                        {prediction.home_team && prediction.away_team 
+                          ? `${prediction.away_team} @ ${prediction.home_team}`
+                          : prediction.home_team || prediction.away_team || 'TBD vs TBD'}
+                      </TableCell>
                       <TableCell>{prediction.bet_type}</TableCell>
                       <TableCell sx={{ fontWeight: 'bold' }}>
                         {prediction.predicted_side}

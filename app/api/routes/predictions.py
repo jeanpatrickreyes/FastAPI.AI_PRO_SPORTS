@@ -343,57 +343,133 @@ async def get_todays_predictions(
     try:
         today = date.today()
         
-        conditions = ["DATE(created_at) = :today"]
-        params = {"today": today}
+        # Build base query with joins for filtering
+        base_query = select(DBPrediction).join(Game).join(Sport)
+        
+        # Apply filters
+        conditions = []
+        conditions.append(func.date(DBPrediction.created_at) == today)
         
         if sport:
-            conditions.append("sport_code = :sport")
-            params["sport"] = sport
+            conditions.append(Sport.code == sport.upper())
         if signal_tier:
-            conditions.append("signal_tier = :signal_tier")
-            params["signal_tier"] = signal_tier
+            # Compare using string value since database column is VARCHAR(1), not PostgreSQL enum
+            try:
+                tier_value = signal_tier.upper()
+                conditions.append(cast(DBPrediction.signal_tier, String) == tier_value)
+            except (ValueError, AttributeError):
+                # Invalid tier value, skip this filter
+                pass
         
-        where_clause = " AND ".join(conditions)
+        if conditions:
+            base_query = base_query.where(and_(*conditions))
         
-        query = text(f"""
-            SELECT 
-                p.*,
-                m.version as model_version
-            FROM predictions p
-            LEFT JOIN ml_models m ON p.model_id = m.id
-            WHERE {where_clause}
-            ORDER BY p.probability DESC
-        """)
-        
-        result = await db.execute(query, params)
-        rows = result.fetchall()
-        
-        predictions = [
-            PredictionBase(
-                id=row.id,
-                game_id=row.game_id,
-                sport_code=row.sport_code,
-                bet_type=row.bet_type,
-                predicted_side=row.predicted_side,
-                probability=row.probability,
-                edge=row.edge,
-                signal_tier=row.signal_tier,
-                line_at_prediction=row.line_at_prediction,
-                odds_at_prediction=row.odds_at_prediction,
-                kelly_fraction=row.kelly_fraction,
-                recommended_bet=row.recommended_bet,
-                prediction_hash=row.prediction_hash,
-                locked_at=row.created_at,  # Using created_at as locked_at since locked_at column doesn't exist
-                model_id=row.model_id,
-                model_version=row.model_version or "1.0.0",
-                is_graded=row.is_graded,
-                result=row.result,
-                actual_outcome=row.actual_outcome,
-                profit_loss=row.profit_loss,
-                clv=row.clv
+        # Execute query with eager loading
+        data_query = base_query.options(
+            load_only(
+                DBPrediction.id,
+                DBPrediction.game_id,
+                DBPrediction.model_id,
+                DBPrediction.bet_type,
+                DBPrediction.predicted_side,
+                DBPrediction.probability,
+                DBPrediction.line_at_prediction,
+                DBPrediction.odds_at_prediction,
+                DBPrediction.edge,
+                DBPrediction.signal_tier,
+                DBPrediction.kelly_fraction,
+                DBPrediction.prediction_hash,
+                DBPrediction.created_at
+            ),
+            selectinload(DBPrediction.game),
+            selectinload(DBPrediction.result).load_only(
+                PredictionResult.id,
+                PredictionResult.prediction_id,
+                PredictionResult.actual_result,
+                PredictionResult.closing_line,
+                PredictionResult.clv,
+                PredictionResult.profit_loss,
+                PredictionResult.graded_at
             )
-            for row in rows
-        ]
+        ).order_by(DBPrediction.probability.desc())
+        
+        result = await db.execute(data_query)
+        predictions_list = result.scalars().all()
+        
+        # Get sport codes and team names for all games
+        game_ids = [pred.game_id for pred in predictions_list if pred.game_id]
+        sport_codes_map = {}
+        team_names_map = {}  # game_id -> {"home_team": name, "away_team": name, "game_date": datetime}
+        if game_ids:
+            # Get sport codes
+            sport_query = select(Game.id, Sport.code).join(Sport, Game.sport_id == Sport.id).where(Game.id.in_(game_ids))
+            sport_result = await db.execute(sport_query)
+            sport_codes_map = {row.id: row.code for row in sport_result.all()}
+            
+            # Get team names and game dates using raw SQL to avoid relationship loading issues
+            team_query = text("""
+                SELECT 
+                    g.id,
+                    g.game_date,
+                    ht.name as home_team_name,
+                    at.name as away_team_name
+                FROM games g
+                JOIN teams ht ON g.home_team_id = ht.id
+                JOIN teams at ON g.away_team_id = at.id
+                WHERE g.id = ANY(:game_ids)
+            """)
+            team_result = await db.execute(team_query, {"game_ids": [str(gid) for gid in game_ids]})
+            for row in team_result:
+                team_names_map[UUID(str(row.id))] = {
+                    "home_team": row.home_team_name,
+                    "away_team": row.away_team_name,
+                    "game_date": row.game_date
+                }
+        
+        # Convert to response models
+        predictions = []
+        for pred in predictions_list:
+            sport_code = sport_codes_map.get(pred.game_id) if pred.game_id else None
+            pred_result = pred.result
+            game_info = team_names_map.get(pred.game_id, {}) if pred.game_id else {}
+            
+            # Compute status from is_graded and result
+            status = "pending"
+            if pred_result is not None and pred_result.actual_result:
+                status = pred_result.actual_result.value  # "win", "loss", or "push"
+            
+            predictions.append(
+                PredictionBase(
+                    id=str(pred.id),
+                    game_id=str(pred.game_id),
+                    sport_code=sport_code,
+                    sport=sport_code,  # Frontend-compatible field
+                    home_team=game_info.get("home_team"),
+                    away_team=game_info.get("away_team"),
+                    game_time=game_info.get("game_date"),
+                    line=pred.line_at_prediction,  # Frontend-compatible field
+                    odds=pred.odds_at_prediction,  # Frontend-compatible field
+                    status=status,  # Computed status
+                    bet_type=pred.bet_type,
+                    predicted_side=pred.predicted_side,
+                    probability=pred.probability,
+                    edge=pred.edge,
+                    signal_tier=pred.signal_tier.value if pred.signal_tier else None,
+                    line_at_prediction=pred.line_at_prediction,
+                    odds_at_prediction=pred.odds_at_prediction,
+                    kelly_fraction=pred.kelly_fraction,
+                    recommended_bet=None,  # recommended_bet_size column doesn't exist in database
+                    prediction_hash=pred.prediction_hash,
+                    locked_at=pred.created_at,  # Using created_at as locked_at
+                    model_id=str(pred.model_id) if pred.model_id else None,
+                    model_version="1.0.0",  # TODO: Get from model relationship
+                    is_graded=pred_result is not None,
+                    result=pred_result.actual_result.value if pred_result and pred_result.actual_result else None,
+                    actual_outcome=pred_result.actual_result.value if pred_result and pred_result.actual_result else None,
+                    profit_loss=pred_result.profit_loss if pred_result else None,
+                    clv=pred_result.clv if pred_result else None
+                )
+            )
         
         # Cache for 5 minutes
         await cache_manager.set(cache_key, [p.dict() for p in predictions], ttl=300)

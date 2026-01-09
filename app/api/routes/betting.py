@@ -8,6 +8,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from app.core.database import get_db
 from app.api.dependencies import get_current_user
@@ -200,11 +201,11 @@ async def get_bankrolls(
     
     try:
         user_id = current_user.id if hasattr(current_user, 'id') else current_user["id"]
-        query = """
+        query = text("""
             SELECT * FROM bankrolls
             WHERE user_id = :user_id
             ORDER BY created_at DESC
-        """
+        """)
         
         result = await db.execute(query, {"user_id": user_id})
         rows = result.fetchall()
