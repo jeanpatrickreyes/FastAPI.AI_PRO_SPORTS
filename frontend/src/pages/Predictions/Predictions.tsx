@@ -196,26 +196,60 @@ const Predictions: React.FC = () => {
 
   useEffect(() => {
     setPage(0); // Reset to first page when filters change
-  }, [selectedSport, selectedBetType]); // Removed selectedTier - filtering client-side
+  }, [selectedSport, selectedBetType, selectedTier]); // Include selectedTier to reset page
 
   useEffect(() => {
     loadPredictions();
-  }, [selectedSport, selectedBetType, page, rowsPerPage]); // Removed selectedTier - filtering client-side
+  }, [selectedSport, selectedBetType, page, rowsPerPage, selectedTier]); // Include selectedTier to refetch when changed
 
   const loadPredictions = async () => {
     try {
       setLoading(true);
-      const params: any = {
-        page: page + 1, // Backend uses 1-based pagination
-        per_page: rowsPerPage
-      };
-      if (selectedSport !== 'all') params.sport = selectedSport;
-      // Tier filtering is done client-side, not sent to API
-      if (selectedBetType !== 'all') params.bet_type = selectedBetType;
+      
+      // When tier filter is selected, fetch all pages to get all predictions for client-side filtering
+      if (selectedTier !== 'all') {
+        // Fetch all predictions (multiple pages if needed) when tier filter is active
+        const allPredictions: Prediction[] = [];
+        let currentPage = 1;
+        let hasMore = true;
+        const maxPerPage = 100; // Backend limit
+        
+        while (hasMore) {
+          const params: any = {
+            page: currentPage,
+            per_page: maxPerPage
+          };
+          if (selectedSport !== 'all') params.sport = selectedSport;
+          if (selectedBetType !== 'all') params.bet_type = selectedBetType;
+          
+          const data = await api.getPredictions(params);
+          if (data.predictions && data.predictions.length > 0) {
+            allPredictions.push(...data.predictions);
+            // Check if there are more pages
+            const totalPages = Math.ceil((data.total || 0) / maxPerPage);
+            hasMore = currentPage < totalPages;
+            currentPage++;
+          } else {
+            hasMore = false;
+          }
+        }
+        
+        setPredictions(allPredictions);
+        setTotal(allPredictions.length);
+      } else {
+        // Normal pagination when no tier filter
+        const params: any = {
+          page: page + 1, // Backend uses 1-based pagination
+          per_page: rowsPerPage
+        };
+        if (selectedSport !== 'all') params.sport = selectedSport;
+        if (selectedBetType !== 'all') params.bet_type = selectedBetType;
 
-      const data = await api.getPredictions(params);
-      setPredictions(data.predictions || []);
-      setTotal(data.total || 0);
+        const data = await api.getPredictions(params);
+        setPredictions(data.predictions || []);
+        setTotal(data.total || 0);
+      }
+      
       setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to load predictions');
@@ -286,12 +320,19 @@ const Predictions: React.FC = () => {
     return true;
   });
 
+  // Client-side pagination for tier-filtered results
+  const paginatedPredictions = selectedTier !== 'all' 
+    ? filteredPredictions.slice(page * rowsPerPage, (page + 1) * rowsPerPage)
+    : filteredPredictions;
+  
+  const filteredTotal = selectedTier !== 'all' ? filteredPredictions.length : total;
+
   const stats = {
-    total: predictions.length,
-    tierA: predictions.filter((p) => p.signal_tier === 'A').length,
-    pending: predictions.filter((p) => p.status === 'pending').length,
-    winRate: predictions.filter((p) => p.result === 'win').length /
-      Math.max(predictions.filter((p) => p.status === 'graded').length, 1) * 100,
+    total: filteredPredictions.length, // Use filtered predictions for stats
+    tierA: filteredPredictions.filter((p) => p.signal_tier === 'A').length,
+    pending: filteredPredictions.filter((p) => p.status === 'pending').length,
+    winRate: filteredPredictions.filter((p) => p.result === 'win').length /
+      Math.max(filteredPredictions.filter((p) => p.status === 'graded' || p.status === 'win' || p.status === 'loss' || p.status === 'push').length, 1) * 100,
   };
 
   return (
@@ -449,7 +490,7 @@ const Predictions: React.FC = () => {
         </Tabs>
         <TablePagination
           component="div"
-          count={total}
+          count={filteredTotal}
           page={page}
           onPageChange={handleChangePage}
           rowsPerPage={rowsPerPage}
@@ -486,7 +527,7 @@ const Predictions: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredPredictions.map((prediction) => (
+                {paginatedPredictions.map((prediction) => (
                   <TableRow key={prediction.id} hover>
                     <TableCell>
                       <Chip label={prediction.sport} size="small" />
@@ -533,7 +574,7 @@ const Predictions: React.FC = () => {
                     </TableCell>
                   </TableRow>
                 ))}
-                {filteredPredictions.length === 0 && (
+                {paginatedPredictions.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                       <Typography color="textSecondary">No predictions found</Typography>
